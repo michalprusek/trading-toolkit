@@ -76,13 +76,7 @@ def check_trade(
                 f"Position would be {position_pct:.1%} of portfolio (max {limits.max_position_pct:.0%})"
             )
 
-    # 7. Check existing concentration in same symbol
-    existing_in_symbol = sum(
-        p.amount for p in portfolio.positions
-        if True  # Can't check symbol without instrument lookup here
-    )
-
-    # 8. Daily loss check
+    # 7. Daily loss check
     try:
         trade_repo = TradeLogRepo()
         daily_stats = trade_repo.get_today_stats()

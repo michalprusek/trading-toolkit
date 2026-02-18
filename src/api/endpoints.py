@@ -20,10 +20,6 @@ def portfolio_path() -> str:
     return f"/api/v1/trading/info/{settings.mode_prefix}portfolio"
 
 
-def account_path() -> str:
-    return f"/api/v1/trading/info/{settings.mode_prefix}account"
-
-
 # ── Trading Execution ─────────────────────────────────────────────────
 
 def open_trade_path() -> str:
@@ -36,10 +32,6 @@ def close_trade_path(position_id: int) -> str:
 
 def limit_order_path() -> str:
     return f"/api/v1/trading/execution/{settings.mode_prefix}limit-orders"
-
-
-def cancel_order_path(order_id: int) -> str:
-    return f"/api/v1/trading/execution/{settings.mode_prefix}limit-orders/{order_id}"
 
 
 # ── Watchlists ────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import pandas as pd
 
 from src.api.client import EtoroClient
 from src.api import endpoints
-from src.api.models import InstrumentRate, Candle, Instrument
+from src.api.models import InstrumentRate
 from src.market import indicators as ind
 from src.storage.repositories import InstrumentRepo
 

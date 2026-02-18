@@ -75,16 +75,6 @@ class EtoroClient:
         resp = self._request("POST", path, json_body=body)
         return resp.json()
 
-    def put(self, path: str, body: dict[str, Any]) -> Any:
-        resp = self._request("PUT", path, json_body=body)
-        return resp.json()
-
-    def delete(self, path: str) -> Any:
-        resp = self._request("DELETE", path)
-        if resp.content:
-            return resp.json()
-        return {"status": "ok"}
-
     def close(self) -> None:
         self._client.close()
 

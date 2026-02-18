@@ -250,7 +250,7 @@ sizing = calculate_position_size(
     atr=ATR_VALUE,
     price=CURRENT_PRICE,
     conviction="strong|moderate|weak",
-    current_exposure_pct=portfolio.invested / portfolio.total_value if portfolio.total_value > 0 else 0,
+    current_exposure_pct=portfolio.total_invested / portfolio.total_value if portfolio.total_value > 0 else 0,
 )
 
 if sizing.get("amount", 0) >= 50:
@@ -289,7 +289,7 @@ print(f"\n=== Portfolio After Trades ===")
 print(f"Total: ${portfolio.total_value:.2f}")
 print(f"Cash: ${portfolio.cash_available:.2f}")
 print(f"Positions: {len(portfolio.positions)}")
-print(f"Exposure: {(portfolio.invested / portfolio.total_value * 100):.1f}%")
+print(f"Exposure: {(portfolio.total_invested / portfolio.total_value * 100):.1f}%")
 ```
 
 ---

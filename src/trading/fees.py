@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.api.client import EtoroClient
-from src.api import endpoints
 from src.market.data import resolve_symbol, get_rate
 
 
@@ -28,7 +26,6 @@ _OVERNIGHT_RATES: dict[str, float] = {
     "forex": 3.0,
     "commodities": 5.0,
     "indices": 5.0,
-    "etf": 6.4,
 }
 
 # eToro asset class ID → fee category

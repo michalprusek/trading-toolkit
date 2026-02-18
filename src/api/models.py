@@ -72,17 +72,6 @@ class Candle(BaseModel):
     volume: float = 0
 
 
-class OrderRequest(BaseModel):
-    instrument_id: int
-    direction: str  # "BUY" or "SELL"
-    amount: float
-    leverage: float = 1.0
-    stop_loss_rate: float | None = None
-    take_profit_rate: float | None = None
-    is_limit: bool = False
-    limit_rate: float | None = None
-
-
 class TradeResult(BaseModel):
     success: bool
     position_id: int | None = None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from src.storage.database import get_connection
@@ -91,16 +91,6 @@ class TradeLogRepo:
         finally:
             conn.close()
 
-    def get_closes(self, limit: int = 50) -> list[dict]:
-        conn = get_connection()
-        try:
-            rows = conn.execute(
-                "SELECT * FROM position_closes ORDER BY timestamp DESC LIMIT ?", (limit,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            conn.close()
-
     def get_today_stats(self) -> dict:
         today = date.today().isoformat()
         conn = get_connection()
@@ -111,30 +101,6 @@ class TradeLogRepo:
             if row:
                 return dict(row)
             return {"date": today, "realized_pnl": 0, "trades_count": 0}
-        finally:
-            conn.close()
-
-    def update_daily_pnl(
-        self,
-        realized_pnl: float,
-        unrealized_pnl: float,
-        portfolio_value: float,
-        trades_count: int,
-    ) -> None:
-        today = date.today().isoformat()
-        conn = get_connection()
-        try:
-            conn.execute(
-                """INSERT INTO daily_pnl (date, realized_pnl, unrealized_pnl, portfolio_value, trades_count)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(date) DO UPDATE SET
-                     realized_pnl=excluded.realized_pnl,
-                     unrealized_pnl=excluded.unrealized_pnl,
-                     portfolio_value=excluded.portfolio_value,
-                     trades_count=excluded.trades_count""",
-                (today, realized_pnl, unrealized_pnl, portfolio_value, trades_count),
-            )
-            conn.commit()
         finally:
             conn.close()
 
@@ -218,10 +184,3 @@ class InstrumentRepo:
         finally:
             conn.close()
 
-    def get_all(self) -> list[dict]:
-        conn = get_connection()
-        try:
-            rows = conn.execute("SELECT * FROM instruments ORDER BY symbol").fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            conn.close()

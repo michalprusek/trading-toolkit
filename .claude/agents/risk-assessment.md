@@ -30,11 +30,6 @@ python3 cli.py trade check SYMBOL AMOUNT
 python3 cli.py history trades --limit 30
 ```
 
-**Closed positions:**
-```bash
-python3 cli.py history closes --limit 30
-```
-
 **Stored lessons/memories:**
 ```bash
 python3 cli.py memory list --limit 20
