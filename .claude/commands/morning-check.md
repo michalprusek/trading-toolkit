@@ -1,5 +1,21 @@
 Perform a lightweight morning portfolio check — monitor existing holdings, check overnight news, flag alerts, and optionally execute position changes with user approval. NO universe screening — this is a daily health check focused on current holdings + watchlist, not a full analysis.
 
+**Usage**: `/morning-check` or `/morning-check --mode real`
+
+---
+
+## Mode Setup (parse from arguments)
+
+Check `$ARGUMENTS` for `--mode`:
+- `--mode real` → set `TRADING_MODE=real` — **⚠️ REAL ACCOUNT — trades use real money**
+- `--mode demo` or no argument → set `TRADING_MODE=demo` (default, safe)
+
+Announce the mode at the start: `🔵 Mode: DEMO` or `🔴 Mode: REAL — trades will use your real eToro account`.
+
+**Apply the mode to every command in this workflow:**
+- All `python3 cli.py ...` calls → prepend `TRADING_MODE={mode}` (e.g. `TRADING_MODE=real python3 cli.py portfolio --format json`)
+- All inline Python snippets → add `import os; os.environ['TRADING_MODE'] = '{mode}'` as the **very first line**, before any other imports
+
 ---
 
 ## Phase 0: Get Portfolio State
@@ -33,17 +49,26 @@ print(f"Watchlist symbols (excluding portfolio): {watchlist_symbols}")
 
 Additionally, combine with the **hardcoded morning watchlist** below:
 
-#### Morning Watchlist (~30 tech + growth favorites)
+#### Morning Watchlist (~45 tech + growth + fintech favorites)
 
 ```
 # Mega-Cap Tech
 AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, AVGO, ORCL, CRM, AMD, ADBE, NFLX
 
 # Large-Cap Tech / Growth
-NOW, UBER, SHOP, SQ, PLTR, PANW, CRWD, DDOG, NET, ANET, MRVL, MU
+NOW, UBER, SHOP, XYZ, PLTR, PANW, CRWD, DDOG, NET, ANET, MRVL, MU
 
-# Crypto (top 3)
-BTC, ETH, SOL
+# Semiconductors
+ASML, TSM, QCOM
+
+# AI / Cloud
+SMCI, ARM, DELL
+
+# Fintech
+PYPL, COIN, SOFI
+
+# Crypto (top 5)
+BTC, ETH, SOL, ADA, XRP
 ```
 
 Merge eToro watchlist symbols + hardcoded morning watchlist, deduplicate, and remove symbols already in portfolio. The final watchlist is what Agent 3 will screen.
@@ -59,17 +84,17 @@ Spawn ALL THREE subagents simultaneously in a SINGLE message with multiple Task 
 ### Agent 1: Technical Quick Check
 - `subagent_type: "technical-quick-check"`
 - `description: "Technical check holdings"`
-- Prompt: `Portfolio positions to check: {paste ALL portfolio symbols with their directions, invested amounts, and current P&L}`
+- Prompt: `Trading mode: {mode} — prepend TRADING_MODE={mode} to all CLI commands. For inline Python: import os; os.environ['TRADING_MODE'] = '{mode}' as the first line. Portfolio positions to check: {paste ALL portfolio symbols with their directions, invested amounts, and current P&L}`
 
 ### Agent 2: News & Events Check
 - `subagent_type: "news-events-check"`
 - `description: "News and events check"`
-- Prompt: `Portfolio positions to check: {paste ALL portfolio symbols}. Today's date: {current date}`
+- Prompt: `Trading mode: {mode} — prepend TRADING_MODE={mode} to all CLI commands. For inline Python: import os; os.environ['TRADING_MODE'] = '{mode}' as the first line. Portfolio positions to check: {paste ALL portfolio symbols}. Today's date: {current date}`
 
 ### Agent 3: Watchlist Screener
 - `subagent_type: "watchlist-screener"`
 - `description: "Screen watchlist symbols"`
-- Prompt: `Watchlist symbols to screen: {paste ALL merged watchlist symbols from Phase 0, excluding portfolio positions}`
+- Prompt: `Trading mode: {mode} — prepend TRADING_MODE={mode} to all CLI commands. For inline Python: import os; os.environ['TRADING_MODE'] = '{mode}' as the first line. Watchlist symbols to screen: {paste ALL merged watchlist symbols from Phase 0, excluding portfolio positions}`
 
 ---
 
@@ -268,7 +293,8 @@ if sizing.get("amount", 0) >= 50:
     if result.success:
         time.sleep(2)
         portfolio = get_portfolio()
-        iid = resolve_symbol("SYMBOL")
+        iid_data = resolve_symbol("SYMBOL")
+        iid = iid_data['instrument_id'] if isinstance(iid_data, dict) else iid_data
         if result.position_id:
             found = any(getattr(p, 'position_id', None) == result.position_id for p in portfolio.positions)
         else:

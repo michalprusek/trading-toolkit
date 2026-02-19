@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Optional
+
+# Early mode detection — must happen before src.storage.database is imported,
+# which triggers config.py to call Settings() as a module-level singleton.
+_mode_idx = next((i for i, a in enumerate(sys.argv) if a == "--mode"), None)
+if _mode_idx is not None and _mode_idx + 1 < len(sys.argv):
+    os.environ["TRADING_MODE"] = sys.argv[_mode_idx + 1]
+del _mode_idx
 
 import typer
 from rich.console import Console
@@ -840,7 +848,12 @@ def config_set(
 # ── Init DB on startup ─────────────────────────────────────────────────
 
 @app.callback()
-def main_callback():
+def main_callback(
+    mode: Optional[str] = typer.Option(None, "--mode", help="Trading mode: demo or real"),
+):
+    if mode is not None and mode not in ("demo", "real"):
+        console.print("[red]--mode must be 'demo' or 'real'[/red]")
+        raise typer.Exit(1)
     init_db()
 
 

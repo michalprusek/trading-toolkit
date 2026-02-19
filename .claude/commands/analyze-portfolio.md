@@ -1,5 +1,22 @@
 Perform a comprehensive multi-agent portfolio analysis with **screening**, **deep research**, and **user-approved trade execution**. You will orchestrate a team of specialized agents that work in parallel, synthesize their results, present a trade plan for user approval, and only then execute approved trades with post-trade verification. Follow these phases exactly.
 
+**Usage**: `/analyze-portfolio` or `/analyze-portfolio --mode real`
+
+---
+
+## Mode Setup (parse from arguments)
+
+Check `$ARGUMENTS` for `--mode`:
+- `--mode real` → set `TRADING_MODE=real` — **⚠️ REAL ACCOUNT — trades will use real money**
+- `--mode demo` or no argument → set `TRADING_MODE=demo` (default, safe)
+
+Announce the mode prominently before Phase 0: `🔵 Mode: DEMO` or `🔴 Mode: REAL — ALL TRADE EXECUTIONS WILL USE YOUR REAL eToro ACCOUNT`.
+
+**Apply the mode to every command in this workflow:**
+- All `python3 cli.py ...` calls → prepend `TRADING_MODE={mode}` (e.g. `TRADING_MODE=real python3 cli.py portfolio --format json`)
+- All inline Python snippets → add `import os; os.environ['TRADING_MODE'] = '{mode}'` as the **very first line**, before any other imports
+- Also pass `--mode {mode}` to all subagent prompts so they can use the correct environment
+
 ---
 
 ## Phase 0: Initialize
@@ -38,7 +55,7 @@ Wait for the History Agent to return before proceeding.
 
 After getting portfolio data and watchlists, build the **instrument universe** for screening:
 
-1. Start with the hardcoded list of ~160 symbols below
+1. Start with the hardcoded list of ~200 symbols below
 2. Add symbols from eToro watchlists:
 ```python
 from src.portfolio.manager import get_watchlists
@@ -55,20 +72,32 @@ print(f"Watchlist symbols: {watchlist_symbols}")
 4. Deduplicate the combined list
 5. Split into **3 roughly equal batches** for the screening agents
 
-#### Hardcoded Universe (~160 symbols)
+#### Hardcoded Universe (~200 symbols)
 
 ```
 # US Mega-Cap Tech (15)
 AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, AVGO, ORCL, CRM, AMD, ADBE, NFLX, INTC, CSCO
 
 # US Large-Cap Tech / Growth (15)
-NOW, UBER, SHOP, SQ, SNOW, PLTR, PANW, CRWD, DDOG, NET, ZS, TEAM, MRVL, MU, ANET
+NOW, UBER, SHOP, XYZ, SNOW, PLTR, PANW, CRWD, DDOG, NET, ZS, TEAM, MRVL, MU, ANET
+
+# Semiconductors (7)
+ASML, TSM, KLAC, LRCX, QCOM, TXN, ON
+
+# AI / Cloud (4)
+SMCI, ARM, DELL, WDAY
 
 # Financials (10)
 JPM, BAC, GS, MS, V, MA, BLK, AXP, C, SCHW
 
+# Fintech (4)
+PYPL, COIN, SOFI, HOOD
+
 # Healthcare (10)
 UNH, JNJ, LLY, PFE, ABBV, MRK, TMO, ABT, AMGN, ISRG
+
+# Biotech (4)
+GILD, REGN, VRTX, MRNA
 
 # Defense & Aerospace (8)
 LMT, RTX, NOC, GD, LHX, HII, BA, LDOS
@@ -88,6 +117,9 @@ CAT, DE, GE, HON, UNP, MMM
 # Materials (4)
 LIN, APD, FCX, NEM
 
+# Commodities / Mining (4)
+VALE, BHP, RIO, GOLD
+
 # Real Estate (4)
 PLD, AMT, EQIX, SPG
 
@@ -97,23 +129,29 @@ NEE, DUK, SO
 # Communication (4)
 DIS, CMCSA, T, VZ
 
-# US Broad ETFs (8)
+# China ADRs (5)
+BABA, JD, PDD, BIDU, LI
+
+# European ADRs (4)
+SAP, NVO, AZN, SHEL
+
+# US Broad ETFs (8) — demo-restricted, used for benchmarking only
 SPY, QQQ, IWM, DIA, VTI, VOO, ARKK, XLK
 
-# Sector ETFs (10)
+# Sector ETFs (10) — demo-restricted
 XLE, XLF, XLV, XLI, XLP, XLY, XLU, XLB, XLRE, XLC
 
-# International ETFs (6)
+# International ETFs (6) — demo-restricted
 EFA, EEM, FXI, EWJ, EWG, EWZ
 
-# Bond / Income ETFs (5)
+# Bond / Income ETFs (5) — demo-restricted
 TLT, HYG, LQD, BND, SCHD
 
-# Commodity ETFs (4)
+# Commodity ETFs (4) — demo-restricted
 GLD, SLV, USO, UNG
 
-# Crypto (8)
-BTC, ETH, SOL, ADA, XRP, DOGE, DOT, AVAX
+# Crypto (11)
+BTC, ETH, SOL, ADA, XRP, DOGE, DOT, AVAX, LINK, UNI, NEAR
 ```
 
 Print the total universe size and batch sizes before proceeding to Phase 1.5.
@@ -131,6 +169,7 @@ Spawn **3 parallel batch-screener agents** in a SINGLE message with multiple Tas
 
 Each screening agent prompt should include ONLY the dynamic data:
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Your batch of symbols**: {paste batch N symbols}
 > **Portfolio positions in this batch** (MUST always include in results): {paste any portfolio symbols that fall in this batch}
 
@@ -179,6 +218,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Technical analysis"`
 - Prompt (dynamic data only — the agent's system prompt already defines the full analysis process):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates** (from screening): {paste the filtered symbol list with CSS scores}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste position symbols and directions from Phase 1}
 
@@ -188,6 +228,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Fundamental analysis"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates**: {paste symbols from screening}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste symbols, directions, invested amounts from Phase 1}
 
@@ -197,6 +238,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Market news research"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates**: {paste symbols from screening with CSS scores}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste symbols from Phase 1}
 
@@ -206,6 +248,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Risk assessment"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Current portfolio positions**: {paste full position details — symbols, amounts, P&L, leverage, direction}
 > **Portfolio totals**: {paste total value, invested, cash, overall P&L from Phase 1}
 > **Filtered candidates for potential ADD**: {paste candidate symbols}
@@ -298,7 +341,7 @@ portfolio = get_portfolio()
 trade_repo = TradeLogRepo()
 daily_stats = trade_repo.get_today_stats()
 daily_loss = daily_stats.get("realized_pnl", 0)
-total_value = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
+total_value = portfolio.total_value
 
 if total_value > 0 and daily_loss < 0:
     daily_loss_pct = abs(daily_loss) / total_value
@@ -349,7 +392,7 @@ import time
 
 # Refresh portfolio after any SELLs
 portfolio = get_portfolio()
-_total_value = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
+_total_value = portfolio.total_value
 
 # 1. Calculate position size (use ATR + conviction from synthesis)
 sizing = calculate_position_size(
@@ -358,7 +401,7 @@ sizing = calculate_position_size(
     atr=ATR_VALUE,                    # from Technical Agent
     price=CURRENT_PRICE,              # from Technical Agent
     conviction="strong|moderate|weak", # from Phase 3 consensus
-    current_exposure_pct=portfolio.total_invested / _total_value if _total_value > 0 else 0,
+    current_exposure_pct=portfolio.total_invested / portfolio.total_value if portfolio.total_value > 0 else 0,
 )
 
 if sizing.get("amount", 0) >= 50:
@@ -411,13 +454,12 @@ After SELLs and before BUYs, check for oversized positions. Since eToro doesn't 
 ```python
 from src.portfolio.manager import get_portfolio
 portfolio = get_portfolio()
-_tv = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
 print(f"\n=== Final Portfolio State ===")
-print(f"Total: ${_tv:.2f}")
+print(f"Total: ${portfolio.total_value:.2f}")
 print(f"Cash: ${portfolio.cash_available:.2f}")
 print(f"Invested: ${portfolio.total_invested:.2f}")
 print(f"Positions: {len(portfolio.positions)}")
-print(f"Exposure: {(portfolio.total_invested / _tv * 100):.1f}%")
+print(f"Exposure: {(portfolio.total_invested / portfolio.total_value * 100):.1f}%" if portfolio.total_value > 0 else "Exposure: 0%")
 ```
 
 ---

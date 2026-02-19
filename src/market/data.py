@@ -12,6 +12,16 @@ from src.market import indicators as ind
 from src.storage.repositories import InstrumentRepo
 
 
+# Standard tickers that resolve incorrectly on eToro's search API.
+# Single/double-letter symbols often match forex pairs or futures first.
+# Values are the eToro-specific symbol that resolves correctly.
+SYMBOL_ALIASES: dict[str, str] = {
+    "V": "V.RTH",       # Visa Inc — search returns VIX futures
+    "C": "C.RTH",       # Citigroup — search returns CHF/JPY
+    "CL": "CL.RTH",     # Colgate-Palmolive — search returns Crude Oil futures
+    "SQ": "XYZ",         # Block Inc — ticker changed from SQ to XYZ
+}
+
 _client: EtoroClient | None = None
 
 
@@ -50,11 +60,20 @@ def resolve_symbol(symbol: str) -> dict | None:
     cached = repo.get_by_symbol(symbol)
     if cached:
         return cached
-    results = search_instrument(symbol)
+
+    # Redirect ambiguous tickers to their correct eToro symbol
+    lookup = SYMBOL_ALIASES.get(symbol.upper(), symbol)
+
+    results = search_instrument(lookup)
     for r in results:
-        if r["symbol"].upper() == symbol.upper():
+        if r["symbol"].upper() == lookup.upper():
+            # Cache under the original symbol too (e.g. V → V.RTH)
+            if lookup.upper() != symbol.upper():
+                repo.upsert(r["instrument_id"], symbol.upper(), r["name"], r.get("type", ""))
             return r
-    return results[0] if results else None
+
+    # No exact match — return None instead of blindly picking results[0]
+    return None
 
 
 def get_rates(instrument_ids: list[int]) -> list[InstrumentRate]:
