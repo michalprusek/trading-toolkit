@@ -63,7 +63,10 @@ CLI commands (Typer) → domain modules → API client → eToro REST API, with 
 ### eToro Platform Constraints & Fees
 
 - **No partial position closes** — can only close entire position. Rebalancing must use future sizing instead of trim.
-- **Trailing SL** — supported via `IsTslEnabled: True` in order payload
+- **Trailing SL (new positions only)** — set via `IsTslEnabled: True` in open-order payload; **no API endpoint exists to modify SL/TP/TSL on existing positions** — must be done manually in eToro UI
+- **eToro UI SL format (existing positions)** — field "Částka zisku/ztráty" = minimum P&L in $, not stock price. Formula: `SL_$ = (SL_price / open_rate - 1) × invested`. To protect X% trail: `SL_$ = current_value × (1 - X%) - invested`
+- **Position close verification** — after `close_position()`, wait 8s before re-checking (not 3s); crypto closes may show position still present at 3s even when order succeeded (statusID=1 = placed)
+- **Always recommend SL/TSL values** — for every WATCH/ALERT position without stops, always tell the user what specific values to set manually in eToro (SL price or TSL $amount via "Částka zisku/ztráty"). Don't just flag missing stops — give exact numbers.
 - **Stocks (unleveraged BUY)**: $1-2 commission, NO overnight fees
 - **ETFs (unleveraged BUY)**: $0 commission, NO overnight fees
 - **Crypto**: 1% buy + 0.6-1% sell spread, no overnight fees if unleveraged
@@ -86,16 +89,48 @@ $10–$1000 per trade, max 10% concentration, max 90% exposure, max 20 positions
 
 **AggressiveRiskLimits** (used by `/analyze-portfolio` autonomous execution): $50–$3000 per trade, max 20% concentration, max 95% exposure, 5% daily loss circuit breaker, 1.0x max leverage.
 
-### ATR-Based Stops & Position Sizing (`src/trading/atr_stops.py`)
+### Chandelier Exit + SuperTrend Stops (`src/trading/atr_stops.py`, `src/market/indicators.py`)
 
-- `calculate_atr_stops(price, atr, direction)` — dynamic SL/TP based on volatility (2x ATR for SL, 3x ATR for TP, clamped to 1-15% SL range)
+- `calculate_chandelier_stops(df, price, direction)` — **primary TSL method**. Stop = `Highest_High(22) - 3×ATR` for BUY (never retreats as price rises). SuperTrend (14/3) provides trend-state gate. Returns `sl_rate`, `sl_pct`, `trend_up`, `supertrend_value`, `method="chandelier"`.
+- `calculate_atr_stops(price, atr, direction)` — legacy scalar fallback (2x ATR for SL, 3x ATR for TP, clamped 1-15%). Used when OHLC df not available.
 - `calculate_position_size(portfolio_value, cash, atr, price, conviction)` — conviction-based sizing: strong (3% risk, $3K max), moderate (2%, $1.5K), weak (1%, $500). ATR-adjusted, $200 cash buffer, halved if exposure >80%.
-- `open_position()` accepts `atr_value`, `trailing_sl`, `limits_override` params for ATR stops + trailing SL + custom risk limits
+- `open_position()` accepts `df` (OHLCV DataFrame for Chandelier stops), `atr_value` (scalar fallback), `trailing_sl`, `limits_override`. **TSL auto-enabled when df provided and SuperTrend is bullish.**
+- `analyze_instrument()` now returns `chandelier.long_stop`, `chandelier.short_stop`, `chandelier.trend_up`, `chandelier.supertrend` in every analysis result.
+
+**TSL recommendation for existing positions (eToro UI manual entry):**
+1. Run `python3 cli.py market analyze SYMBOL` → get `chandelier.long_stop` value.
+2. Compute TSL amount: `SL_$ = (chandelier_long_stop / open_rate - 1) × invested`
+3. Enter in eToro UI field "Částka zisku/ztráty". Negative = accept loss, positive = protect profit.
+4. **Only activate TSL** (`IsTslEnabled`) when `chandelier.trend_up == True`. In bearish SuperTrend, prefer tighter fixed SL or consider closing position instead.
 
 ### Custom Commands
 
-- `/analyze-portfolio` — Multi-agent portfolio analysis with **screening**, **deep research**, and **user-approved trade execution**. 7 phases: (0) Save snapshot, (1) Load history + portfolio + build ~160-symbol universe, (1.5) 3 parallel screening agents with CSS scoring → top 25-30 candidates, (2) 4 parallel deep research agents (Technical, Fundamental, News, Risk) with enhanced outputs, (3) Synthesis + trade plan table + **HARD GATE requiring user approval**, (4) Execute only approved trades with post-trade verification, (5) Extended changelog with screening summary + approval status + verification. Respects daily loss circuit breaker (5%). Fee-aware. Uses AggressiveRiskLimits, ATR stops + trailing SL, conviction-based sizing.
+- `/morning-check` — Lightweight daily portfolio health check. Phases: (0) Get portfolio + watchlist, (0.5) **Market Regime Check** (SPY + QQQ + VIX → bias + sizing adjustment), (1) 3 parallel agents (Technical Quick Check, News & Events, Watchlist Screener), (2) Consolidated morning dashboard with VIX regime, MA alignment, RVOL, earnings calendar, (3) Trade suggestions with entry zones + R:R ratios + hard approval gate, (4) Execute approved trades, (5) Changelog. Enforces earnings block (<5 days), R:R >= 1:2, VIX-adjusted sizing.
+
+- `/analyze-portfolio` — Comprehensive multi-agent portfolio analysis. Phases: (0) Save snapshot, (1) **Market Regime Check** + load history + portfolio + build ~200-symbol universe, (1.5) 3 parallel CSS screeners (with RVOL + MA alignment bonuses), (2) 4 parallel deep research agents (Technical with entry/SL/TP/R:R + setup score, Fundamental with earnings block, News with insider/short interest/options, Risk with VIX-aware scenarios), (3) Synthesis + trade plan with entry zones + R:R ratios + setup scores + **HARD GATE**, (4) Execute with VIX-adjusted sizing + post-trade verification, (5) Extended changelog. Enforces R:R >= 1:2, earnings block, VIX sizing, sector RS.
 
 ### Technical Indicators
 
-6 core (SMA, EMA, RSI, MACD, Bollinger Bands, ATR) + 5 extended (Stochastic, ADX, OBV, Support/Resistance, Fibonacci Retracement). Extended indicators available via `analyze_instrument(symbol, extended=True)`.
+6 core (SMA, EMA, RSI, MACD, Bollinger Bands, ATR) + 5 extended (Stochastic, ADX, OBV, Support/Resistance, Fibonacci Retracement) + 2 swing-trading (RVOL, MA Alignment). Extended indicators available via `analyze_instrument(symbol, extended=True)`.
+
+**Swing-Trading Indicators** (always included in `analyze_instrument()` output):
+- `ema_8`, `ema_21`: Short-term momentum MAs for swing entry/exit timing
+- `sma_200`: Long-term trend MA (None if < 200 bars of data)
+- `rvol`: Relative Volume — today's volume vs 30-day average. > 1.5 = institutional interest, < 0.5 = weak conviction
+- `ma_alignment`: Golden alignment check — `{"status": "GOLDEN|MOSTLY_BULLISH|MIXED|MOSTLY_BEARISH|DEATH", "bullish_layers": 0-3, ...}`. GOLDEN = Price > EMA21 > SMA50 > SMA200.
+- `gap_pct`: Pre-market/intraday gap vs last candle close (%)
+
+**Market Regime Analysis** (`analyze_market_regime()`):
+- Returns SPY + QQQ trends, VIX level/regime, overall bias (RISK_ON/CAUTIOUS/RISK_OFF)
+- VIX-based position sizing: < 20 = 1.0x, 20-25 = 0.75x, 25-30 = 0.5x, > 30 = 0.25x
+- Used by morning-check and analyze-portfolio as first step (top-down approach)
+
+### Swing Trading Rules (enforced by agents)
+
+- **Earnings block**: Never open new positions < 5 days before earnings (gap risk)
+- **R:R filter**: Reject BUY setups with Risk:Reward ratio < 1:2
+- **Volume confirmation**: Prefer entries with RVOL > 1.0
+- **MA alignment**: Prefer entries with GOLDEN or MOSTLY_BULLISH alignment
+- **VIX sizing**: Adjust all new position sizes by VIX sizing_adjustment factor
+- **Sector RS**: Check if the stock's sector is in rotation (outperforming SPY)
+- **Smart money**: Check insider trading, short interest, unusual options activity via WebSearch

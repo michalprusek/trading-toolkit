@@ -60,16 +60,23 @@ time.sleep(0.5)  # rate limit protection
 
 **CSS = Trend * 0.30 + Momentum * 0.25 + Volatility * 0.20 + Signals * 0.25**
 
+**Post-CSS Adjustments (apply AFTER base CSS calculation):**
+- **RVOL bonus**: If `result["rvol"]` > 1.5: CSS += 5 (volume confirms institutional interest)
+- **RVOL penalty**: If `result["rvol"]` < 0.5: CSS -= 5 (no conviction behind price move)
+- **MA Alignment bonus**: If `result["ma_alignment"]["status"]` == "GOLDEN": CSS += 5 (all MAs perfectly stacked)
+- **MA Alignment penalty**: If `result["ma_alignment"]["status"]` == "DEATH": CSS -= 10 (all MAs bearish)
+- Clamp final CSS to [0, 100]
+
 **Output Format — TWO sections:**
 
 **Section A — Portfolio positions** (MANDATORY — include ALL portfolio positions from this batch regardless of CSS score):
 ```
-Symbol | CSS | Trend | RSI | ATR | ATR% | Price | Key Signals (top 3) | [PORTFOLIO]
+Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR | ATR% | Price | Key Signals (top 3) | [PORTFOLIO]
 ```
 
 **Section B — Top 15 new candidates** (sorted by CSS descending, excluding portfolio positions already listed above):
 ```
-Symbol | CSS | Trend | RSI | ATR | ATR% | Price | Key Signals (top 3)
+Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR | ATR% | Price | Key Signals (top 3)
 ```
 
 Also return a list of symbols that failed/were skipped with the reason.

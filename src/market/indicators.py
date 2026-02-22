@@ -129,6 +129,154 @@ def support_resistance(df: pd.DataFrame, window: int = 20) -> dict:
     }
 
 
+def chandelier_exit(
+    df: pd.DataFrame,
+    n: int = 22,
+    mult: float = 3.0,
+) -> tuple[pd.Series, pd.Series]:
+    """Chandelier Exit trailing stop levels.
+
+    Anchors the stop to the highest high (long) or lowest low (short) over n
+    periods rather than the current close. This means the long stop only moves
+    up — it never retreats — so profits are protected as the trade advances.
+
+    Args:
+        df: OHLCV DataFrame with columns high, low, close.
+        n: Lookback period (22 for equities/ETFs, 14 for crypto).
+        mult: ATR multiplier for stop distance (3.0 standard).
+
+    Returns:
+        (long_stop, short_stop) — Series aligned to df.index.
+        long_stop  = Highest_High(n) - mult × ATR(n)
+        short_stop = Lowest_Low(n)  + mult × ATR(n)
+    """
+    atr_series = atr(df, n)
+    long_stop = df["high"].rolling(n).max() - mult * atr_series
+    short_stop = df["low"].rolling(n).min() + mult * atr_series
+    return long_stop, short_stop
+
+
+def supertrend(
+    df: pd.DataFrame,
+    n: int = 14,
+    mult: float = 3.0,
+) -> tuple[pd.Series, pd.Series]:
+    """SuperTrend indicator — ATR-based trend filter with band-locking logic.
+
+    The band-locking mechanism is the key feature: the upper band only
+    tightens in a downtrend (never widens), and the lower band only tightens
+    in an uptrend. This prevents the indicator from being pushed away from
+    price by short-term volatility spikes during an active trend.
+
+    Args:
+        df: OHLCV DataFrame with columns high, low, close.
+        n: ATR period.
+        mult: ATR multiplier for band distance.
+
+    Returns:
+        (supertrend_line, direction) where direction is +1 (bullish) or -1 (bearish).
+    """
+    hl2 = (df["high"] + df["low"]) / 2
+    atr_series = atr(df, n)
+
+    ub_basic = (hl2 + mult * atr_series).to_numpy(dtype=float)
+    lb_basic = (hl2 - mult * atr_series).to_numpy(dtype=float)
+    close_arr = df["close"].to_numpy(dtype=float)
+    n_bars = len(df)
+
+    ub_arr = ub_basic.copy()
+    lb_arr = lb_basic.copy()
+    trend_arr = np.ones(n_bars, dtype=np.int8)  # 1 = bullish, -1 = bearish
+
+    for i in range(1, n_bars):
+        if np.isnan(ub_arr[i]) or np.isnan(lb_arr[i]):
+            trend_arr[i] = trend_arr[i - 1]
+            continue
+
+        # Band-locking: upper band only decreases (tightens) unless prior
+        # close broke above it, which resets the band to basic value.
+        prev_ub = ub_arr[i - 1] if not np.isnan(ub_arr[i - 1]) else ub_arr[i]
+        ub_arr[i] = ub_arr[i] if (ub_arr[i] < prev_ub or close_arr[i - 1] > prev_ub) else prev_ub
+
+        # Band-locking: lower band only increases (tightens) unless prior
+        # close broke below it.
+        prev_lb = lb_arr[i - 1] if not np.isnan(lb_arr[i - 1]) else lb_arr[i]
+        lb_arr[i] = lb_arr[i] if (lb_arr[i] > prev_lb or close_arr[i - 1] < prev_lb) else prev_lb
+
+        # Trend direction: flip only when price crosses the active band.
+        if trend_arr[i - 1] == -1:
+            trend_arr[i] = 1 if close_arr[i] > ub_arr[i] else -1
+        else:
+            trend_arr[i] = -1 if close_arr[i] < lb_arr[i] else 1
+
+    # SuperTrend line: lower band when bullish, upper band when bearish.
+    st_arr = np.where(trend_arr == 1, lb_arr, ub_arr)
+    return (
+        pd.Series(st_arr, index=df.index),
+        pd.Series(trend_arr, index=df.index),
+    )
+
+
+def rvol(df: pd.DataFrame, lookback: int = 30) -> float:
+    """Relative Volume — today's volume vs. average of last *lookback* days.
+
+    RVOL > 1.5 signals strong institutional interest.
+    RVOL < 0.5 signals lack of conviction (avoid breakout trades).
+    """
+    if "volume" not in df.columns or len(df) < 2:
+        return float("nan")
+    vol = df["volume"]
+    current_vol = vol.iloc[-1]
+    avg_vol = vol.iloc[-lookback - 1 : -1].mean() if len(vol) > lookback else vol.iloc[:-1].mean()
+    if avg_vol == 0 or pd.isna(avg_vol):
+        return float("nan")
+    return float(current_vol / avg_vol)
+
+
+def ma_alignment(
+    price: float,
+    ema_21: float,
+    sma_50: float,
+    sma_200: float,
+) -> dict:
+    """Moving average alignment check for swing trading.
+
+    Golden alignment (BUY): Price > EMA21 > SMA50 > SMA200
+    Death alignment (SELL): Price < EMA21 < SMA50 < SMA200
+    """
+    bullish = price > ema_21 > sma_50 > sma_200
+    bearish = price < ema_21 < sma_50 < sma_200
+    # Count how many MA layers are correctly stacked
+    bull_layers = sum([
+        price > ema_21,
+        ema_21 > sma_50,
+        sma_50 > sma_200,
+    ])
+    bear_layers = sum([
+        price < ema_21,
+        ema_21 < sma_50,
+        sma_50 < sma_200,
+    ])
+    if bullish:
+        status = "GOLDEN"
+    elif bearish:
+        status = "DEATH"
+    elif bull_layers >= 2:
+        status = "MOSTLY_BULLISH"
+    elif bear_layers >= 2:
+        status = "MOSTLY_BEARISH"
+    else:
+        status = "MIXED"
+    return {
+        "status": status,
+        "bullish_layers": bull_layers,
+        "bearish_layers": bear_layers,
+        "price_above_ema21": price > ema_21,
+        "ema21_above_sma50": ema_21 > sma_50,
+        "sma50_above_sma200": sma_50 > sma_200,
+    }
+
+
 def fibonacci_retracement(high: float, low: float) -> dict:
     diff = high - low
     return {

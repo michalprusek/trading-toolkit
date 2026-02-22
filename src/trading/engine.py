@@ -8,7 +8,7 @@ from src.api import endpoints
 from src.api.models import TradeResult
 from src.market.data import resolve_symbol, get_rate
 from src.trading.risk import check_trade
-from src.trading.atr_stops import calculate_atr_stops
+from src.trading.atr_stops import calculate_atr_stops, calculate_chandelier_stops
 from src.storage.repositories import TradeLogRepo
 
 
@@ -33,6 +33,7 @@ def open_position(
     atr_value: float | None = None,
     trailing_sl: bool = False,
     limits_override: RiskLimits | None = None,
+    df=None,
 ) -> TradeResult:
     trade_log = TradeLogRepo()
     active_limits = limits_override or settings.risk
@@ -66,27 +67,27 @@ def open_position(
     is_buy = direction.upper() == "BUY"
     price = rate.ask if is_buy else rate.bid
 
-    # Calculate SL/TP rates — ATR-based if atr_value provided, else percentage-based
-    if atr_value and atr_value > 0:
+    # Calculate SL rates — priority: Chandelier Exit > ATR-based > percentage.
+    # TP is always percentage-based (Chandelier is a trailing stop, not a TP tool).
+    tp_rate = price * (1 + tp_pct / 100) if is_buy else price * (1 - tp_pct / 100)
+
+    if df is not None and len(df) >= 22:
+        chandelier = calculate_chandelier_stops(df, price, direction)
+        if "error" not in chandelier:
+            sl_rate = chandelier["sl_rate"]
+            # Enable TSL automatically when SuperTrend confirms the trend.
+            if chandelier["trend_up"] and direction.upper() == "BUY":
+                trailing_sl = True
+        else:
+            sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
+    elif atr_value and atr_value > 0:
         atr_stops = calculate_atr_stops(price, atr_value, direction)
         if "error" in atr_stops:
-            # Fallback to percentage-based
-            if is_buy:
-                sl_rate = price * (1 - sl_pct / 100)
-                tp_rate = price * (1 + tp_pct / 100)
-            else:
-                sl_rate = price * (1 + sl_pct / 100)
-                tp_rate = price * (1 - tp_pct / 100)
+            sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
         else:
             sl_rate = atr_stops["sl_rate"]
-            tp_rate = atr_stops["tp_rate"]
     else:
-        if is_buy:
-            sl_rate = price * (1 - sl_pct / 100)
-            tp_rate = price * (1 + tp_pct / 100)
-        else:
-            sl_rate = price * (1 + sl_pct / 100)
-            tp_rate = price * (1 - tp_pct / 100)
+        sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
 
     # Build order payload
     payload = {

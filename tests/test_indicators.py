@@ -5,6 +5,7 @@ import pytest
 from src.market.indicators import (
     sma, ema, rsi, macd, bollinger_bands, atr,
     stochastic, adx, obv, support_resistance, fibonacci_retracement,
+    chandelier_exit, supertrend,
 )
 
 
@@ -188,3 +189,175 @@ class TestFibonacciRetracement:
         assert "0.0%" in result
         assert "38.2%" in result
         assert "78.6%" in result
+
+
+class TestRVOL:
+    def test_rvol_normal(self, ohlcv_df):
+        df = ohlcv_df.copy()
+        df["volume"] = 1000.0
+        # All volumes equal → RVOL should be ~1.0
+        from src.market.indicators import rvol
+        result = rvol(df)
+        assert result == pytest.approx(1.0, abs=0.01)
+
+    def test_rvol_high(self, ohlcv_df):
+        df = ohlcv_df.copy()
+        df["volume"] = 1000.0
+        df.iloc[-1, df.columns.get_loc("volume")] = 3000.0
+        from src.market.indicators import rvol
+        result = rvol(df)
+        assert result > 2.5
+
+    def test_rvol_low(self, ohlcv_df):
+        df = ohlcv_df.copy()
+        df["volume"] = 1000.0
+        df.iloc[-1, df.columns.get_loc("volume")] = 200.0
+        from src.market.indicators import rvol
+        result = rvol(df)
+        assert result < 0.3
+
+    def test_rvol_no_volume_column(self):
+        df = pd.DataFrame({"close": [100, 101, 102]})
+        from src.market.indicators import rvol
+        result = rvol(df)
+        assert pd.isna(result)
+
+
+class TestMAAlignment:
+    def test_golden_alignment(self):
+        from src.market.indicators import ma_alignment
+        result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=120)
+        assert result["status"] == "GOLDEN"
+        assert result["bullish_layers"] == 3
+
+    def test_death_alignment(self):
+        from src.market.indicators import ma_alignment
+        result = ma_alignment(price=100, ema_21=110, sma_50=120, sma_200=130)
+        assert result["status"] == "DEATH"
+        assert result["bearish_layers"] == 3
+
+    def test_mostly_bullish(self):
+        from src.market.indicators import ma_alignment
+        # Price > EMA21 > SMA50, but SMA50 < SMA200
+        result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=135)
+        assert result["status"] == "MOSTLY_BULLISH"
+
+    def test_mixed(self):
+        from src.market.indicators import ma_alignment
+        # 1 bullish (price > ema21), 1 bearish (ema21 < sma50), sma50 == sma200 → MIXED
+        result = ma_alignment(price=150, ema_21=140, sma_50=145, sma_200=145)
+        assert result["status"] == "MIXED"
+
+    def test_nan_sma200(self):
+        from src.market.indicators import ma_alignment
+        result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=float("nan"))
+        # With NaN, comparisons return False
+        assert result["status"] in ("MOSTLY_BULLISH", "MIXED", "GOLDEN")
+
+
+class TestChandelierExit:
+    def test_returns_two_series(self, ohlcv_df):
+        long_stop, short_stop = chandelier_exit(ohlcv_df)
+        assert len(long_stop) == len(ohlcv_df)
+        assert len(short_stop) == len(ohlcv_df)
+
+    def test_long_stop_below_price(self, ohlcv_df):
+        long_stop, _ = chandelier_exit(ohlcv_df)
+        last_close = ohlcv_df["close"].iloc[-1]
+        assert long_stop.iloc[-1] < last_close
+
+    def test_short_stop_above_price_in_downtrend(self):
+        # Short stop = Lowest_Low(22) + 3×ATR. In a downtrend the recent lows
+        # are near current price, so short_stop is above close.
+        prices = np.linspace(200, 100, 60)
+        df = pd.DataFrame({
+            "high": prices + 2,
+            "low": prices - 2,
+            "close": prices,
+        })
+        _, short_stop = chandelier_exit(df)
+        last_close = df["close"].iloc[-1]
+        assert short_stop.iloc[-1] > last_close
+
+    def test_long_stop_anchored_to_highest_high(self, ohlcv_df):
+        n, mult = 22, 3.0
+        long_stop, _ = chandelier_exit(ohlcv_df, n=n, mult=mult)
+        highest_high = ohlcv_df["high"].rolling(n).max().iloc[-1]
+        atr_val = atr(ohlcv_df, n).iloc[-1]
+        expected = highest_high - mult * atr_val
+        assert long_stop.iloc[-1] == pytest.approx(expected, rel=1e-6)
+
+    def test_nan_before_warmup(self, ohlcv_df):
+        long_stop, _ = chandelier_exit(ohlcv_df, n=22)
+        # First 21 bars should be NaN (rolling window not yet full).
+        assert pd.isna(long_stop.iloc[0])
+
+    def test_wider_mult_gives_lower_long_stop(self, ohlcv_df):
+        long_3, _ = chandelier_exit(ohlcv_df, mult=3.0)
+        long_5, _ = chandelier_exit(ohlcv_df, mult=5.0)
+        assert long_5.iloc[-1] < long_3.iloc[-1]
+
+    def test_uptrend_stop_ratchets_up(self):
+        # Strongly uptrending price: stop should be strictly increasing.
+        np.random.seed(0)
+        prices = np.linspace(100, 200, 60)
+        df = pd.DataFrame({
+            "high": prices + 2,
+            "low": prices - 2,
+            "close": prices,
+        })
+        long_stop, _ = chandelier_exit(df, n=22)
+        valid = long_stop.dropna()
+        # In a clean uptrend the stop should be non-decreasing.
+        assert (valid.diff().dropna() >= 0).all()
+
+
+class TestSupertrend:
+    def test_returns_two_series(self, ohlcv_df):
+        st_line, direction = supertrend(ohlcv_df)
+        assert len(st_line) == len(ohlcv_df)
+        assert len(direction) == len(ohlcv_df)
+
+    def test_direction_values(self, ohlcv_df):
+        _, direction = supertrend(ohlcv_df)
+        assert set(direction.unique()).issubset({1, -1})
+
+    def test_uptrend_detected(self):
+        # Strongly uptrending market: SuperTrend should be bullish at the end.
+        prices = np.linspace(100, 200, 60)
+        df = pd.DataFrame({
+            "high": prices + 1,
+            "low": prices - 1,
+            "close": prices,
+        })
+        _, direction = supertrend(df)
+        assert direction.iloc[-1] == 1
+
+    def test_downtrend_detected(self):
+        # Strongly downtrending market: SuperTrend should be bearish at the end.
+        prices = np.linspace(200, 100, 60)
+        df = pd.DataFrame({
+            "high": prices + 1,
+            "low": prices - 1,
+            "close": prices,
+        })
+        _, direction = supertrend(df)
+        assert direction.iloc[-1] == -1
+
+    def test_line_below_price_in_uptrend(self):
+        prices = np.linspace(100, 200, 60)
+        df = pd.DataFrame({
+            "high": prices + 1,
+            "low": prices - 1,
+            "close": prices,
+        })
+        st_line, direction = supertrend(df)
+        valid = ~st_line.isna()
+        bullish_bars = (direction == 1) & valid
+        # In bullish bars the SuperTrend line (support) is below close.
+        assert (st_line[bullish_bars] < df["close"][bullish_bars]).all()
+
+    def test_length_matches_input(self, ohlcv_df):
+        st_line, direction = supertrend(ohlcv_df)
+        assert len(st_line) == len(ohlcv_df)
+        assert len(direction) == len(ohlcv_df)
