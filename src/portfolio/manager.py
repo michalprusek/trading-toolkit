@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.api.client import EtoroClient
@@ -10,6 +11,7 @@ from src.storage.repositories import PortfolioRepo, InstrumentRepo
 
 
 _client: EtoroClient | None = None
+_log = logging.getLogger(__name__)
 
 
 def _get_client() -> EtoroClient:
@@ -29,6 +31,11 @@ def enrich_positions_with_rates(positions: list[Position]) -> list[Position]:
     try:
         rates = get_rates(iids)
     except Exception:
+        _log.warning(
+            "Failed to enrich %d positions with live rates — P&L will show $0",
+            len(iids),
+            exc_info=True,
+        )
         return positions
 
     rate_map = {r.instrument_id: r.mid for r in rates}

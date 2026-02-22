@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from config import settings, RiskLimits
@@ -13,6 +14,7 @@ from src.storage.repositories import TradeLogRepo
 
 
 _client: EtoroClient | None = None
+_log = logging.getLogger(__name__)
 
 
 def _get_client() -> EtoroClient:
@@ -79,6 +81,10 @@ def open_position(
             if chandelier["trend_up"] and direction.upper() == "BUY":
                 trailing_sl = True
         else:
+            _log.warning(
+                "Chandelier stop failed for %s (%s) — falling back to percentage SL",
+                symbol, chandelier.get("error"),
+            )
             sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
     elif atr_value and atr_value > 0:
         atr_stops = calculate_atr_stops(price, atr_value, direction)
@@ -86,6 +92,7 @@ def open_position(
             sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
         else:
             sl_rate = atr_stops["sl_rate"]
+            tp_rate = atr_stops["tp_rate"]
     else:
         sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
 
@@ -114,6 +121,7 @@ def open_position(
                            result=resp, reason=reason)
         return result
     except Exception as e:
+        _log.exception("open_position failed for %s", symbol)
         result = TradeResult(success=False, message=str(e))
         trade_log.log_trade(iid, symbol, direction, amount, "error",
                            result={"error": str(e)}, reason=reason)
@@ -155,6 +163,8 @@ def close_position(
             raw=resp if isinstance(resp, dict) else {"status": "ok"},
         )
     except Exception as e:
+        _log.exception("close_position failed for position %s", position_id)
+        trade_log.log_close(position_id, symbol="", pnl=None, reason=f"FAILED: {e}")
         return TradeResult(success=False, message=str(e))
 
 

@@ -170,9 +170,6 @@ def calculate_position_size(
 
     # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget
     atr_ratio = atr / price
-    if atr_ratio <= 0:
-        return {"error": "ATR ratio is zero"}
-
     amount = risk_budget / atr_ratio
 
     # Cap by max trade size for this conviction level

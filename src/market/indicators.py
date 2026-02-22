@@ -237,26 +237,32 @@ def ma_alignment(
     price: float,
     ema_21: float,
     sma_50: float,
-    sma_200: float,
+    sma_200: float | None,
 ) -> dict:
     """Moving average alignment check for swing trading.
 
     Golden alignment (BUY): Price > EMA21 > SMA50 > SMA200
     Death alignment (SELL): Price < EMA21 < SMA50 < SMA200
+
+    When sma_200 is None or NaN (insufficient data), the SMA200 layer is
+    treated as unknown (excluded from bullish/bearish counts) rather than
+    silently returning False from NaN comparisons.
     """
-    bullish = price > ema_21 > sma_50 > sma_200
-    bearish = price < ema_21 < sma_50 < sma_200
-    # Count how many MA layers are correctly stacked
-    bull_layers = sum([
-        price > ema_21,
-        ema_21 > sma_50,
-        sma_50 > sma_200,
-    ])
-    bear_layers = sum([
-        price < ema_21,
-        ema_21 < sma_50,
-        sma_50 < sma_200,
-    ])
+    sma200_valid = sma_200 is not None and not pd.isna(sma_200)
+
+    p_above_e21 = price > ema_21
+    e21_above_s50 = ema_21 > sma_50
+    s50_above_s200 = sma200_valid and sma_50 > sma_200
+    p_below_e21 = price < ema_21
+    e21_below_s50 = ema_21 < sma_50
+    s50_below_s200 = sma200_valid and sma_50 < sma_200
+
+    bullish = p_above_e21 and e21_above_s50 and s50_above_s200
+    bearish = p_below_e21 and e21_below_s50 and s50_below_s200
+
+    bull_layers = sum([p_above_e21, e21_above_s50, s50_above_s200])
+    bear_layers = sum([p_below_e21, e21_below_s50, s50_below_s200])
+
     if bullish:
         status = "GOLDEN"
     elif bearish:
@@ -271,9 +277,9 @@ def ma_alignment(
         "status": status,
         "bullish_layers": bull_layers,
         "bearish_layers": bear_layers,
-        "price_above_ema21": price > ema_21,
-        "ema21_above_sma50": ema_21 > sma_50,
-        "sma50_above_sma200": sma_50 > sma_200,
+        "price_above_ema21": p_above_e21,
+        "ema21_above_sma50": e21_above_s50,
+        "sma50_above_sma200": s50_above_s200,
     }
 
 

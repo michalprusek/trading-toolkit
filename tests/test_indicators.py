@@ -248,11 +248,24 @@ class TestMAAlignment:
         result = ma_alignment(price=150, ema_21=140, sma_50=145, sma_200=145)
         assert result["status"] == "MIXED"
 
+    def test_mostly_bearish(self):
+        from src.market.indicators import ma_alignment
+        # Price < EMA21 < SMA50, but SMA50 > SMA200 → 2 bearish layers, not DEATH
+        result = ma_alignment(price=100, ema_21=110, sma_50=120, sma_200=115)
+        assert result["status"] == "MOSTLY_BEARISH"
+
     def test_nan_sma200(self):
         from src.market.indicators import ma_alignment
+        # price > ema_21 > sma_50 but sma_200 unavailable → SMA200 layer excluded
         result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=float("nan"))
-        # With NaN, comparisons return False
-        assert result["status"] in ("MOSTLY_BULLISH", "MIXED", "GOLDEN")
+        # 2 bullish layers (price>ema21, ema21>sma50), SMA200 layer skipped → MOSTLY_BULLISH
+        assert result["status"] == "MOSTLY_BULLISH"
+        assert result["sma50_above_sma200"] is False  # explicitly False when sma200 unknown
+
+    def test_none_sma200(self):
+        from src.market.indicators import ma_alignment
+        result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=None)
+        assert result["status"] == "MOSTLY_BULLISH"
 
 
 class TestChandelierExit:
@@ -361,3 +374,16 @@ class TestSupertrend:
         st_line, direction = supertrend(ohlcv_df)
         assert len(st_line) == len(ohlcv_df)
         assert len(direction) == len(ohlcv_df)
+
+    def test_single_dip_does_not_flip_trend(self):
+        """Band-locking: one pullback bar should not flip a well-established uptrend."""
+        prices = np.linspace(100, 200, 59)
+        # Append a single dip — moderate pullback, not a full reversal
+        prices_with_dip = np.append(prices, prices[-1] - 5)
+        df = pd.DataFrame({
+            "high": prices_with_dip + 1,
+            "low": prices_with_dip - 1,
+            "close": prices_with_dip,
+        })
+        _, direction = supertrend(df)
+        assert direction.iloc[-1] == 1  # still bullish after one dip

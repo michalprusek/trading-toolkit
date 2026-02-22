@@ -119,23 +119,21 @@ class TestCalculatePositionSize:
             assert halved["amount"] < normal["amount"]
 
     def test_cash_buffer_respected(self):
-        # Only $250 cash → usable = $50, might be below min
+        # $250 cash → usable = $50 (250 - 200 buffer); capped below ATR-based amount
         result = calculate_position_size(
             portfolio_value=10000, cash_available=250,
             atr=5, price=100, conviction="strong",
         )
-        if result.get("amount"):
-            assert result["amount"] <= 50  # 250 - 200 buffer
+        assert result.get("amount") == pytest.approx(50.0)  # min(3000, usable=50)
 
     def test_below_minimum_returns_zero(self):
-        # Very little cash → below $50 minimum
+        # usable = $10 (210 - 200 buffer); ATR-based amount = $200 → capped to $10 < $50 minimum
         result = calculate_position_size(
             portfolio_value=10000, cash_available=210,
             atr=50, price=100, conviction="weak",
         )
-        # Either amount is 0 or there's a reason
-        if result.get("amount") == 0:
-            assert "reason" in result
+        assert result.get("amount") == 0
+        assert "reason" in result
 
     def test_invalid_inputs_return_error(self):
         result = calculate_position_size(

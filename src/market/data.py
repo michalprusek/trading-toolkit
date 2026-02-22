@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+import httpx
+import logging
+
 import pandas as pd
 
 from src.api.client import EtoroClient
@@ -23,6 +26,8 @@ SYMBOL_ALIASES: dict[str, str] = {
 }
 
 _client: EtoroClient | None = None
+_vix_client: httpx.Client | None = None
+_log = logging.getLogger(__name__)
 
 
 def _get_client() -> EtoroClient:
@@ -30,6 +35,16 @@ def _get_client() -> EtoroClient:
     if _client is None:
         _client = EtoroClient()
     return _client
+
+
+def _get_vix_client() -> httpx.Client:
+    global _vix_client
+    if _vix_client is None:
+        _vix_client = httpx.Client(
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+    return _vix_client
 
 
 def search_instrument(query: str) -> list[dict]:
@@ -138,6 +153,32 @@ INTERVAL_MAP = {
 }
 
 
+def _build_chandelier_dict(
+    chandelier_long: Any,
+    chandelier_short: Any,
+    st_direction: Any,
+    st_line: Any,
+) -> dict | None:
+    """Build the chandelier result dict, returning None when any value is NaN.
+
+    Returns None instead of a dict with NaN values to avoid invalid JSON
+    (float('nan') is not JSON-serialisable) and to signal that there is
+    insufficient candle history for a reliable stop calculation.
+    """
+    ch_long = chandelier_long.iloc[-1]
+    ch_short = chandelier_short.iloc[-1]
+    direction_val = st_direction.iloc[-1]
+    st_val = st_line.iloc[-1]
+    if pd.isna(ch_long) or pd.isna(ch_short) or pd.isna(direction_val) or pd.isna(st_val):
+        return None
+    return {
+        "long_stop": round(float(ch_long), 4),
+        "short_stop": round(float(ch_short), 4),
+        "trend_up": bool(direction_val == 1),
+        "supertrend": round(float(st_val), 4),
+    }
+
+
 def analyze_instrument(symbol: str, extended: bool = False) -> dict:
     info = resolve_symbol(symbol)
     if not info:
@@ -182,7 +223,7 @@ def analyze_instrument(symbol: str, extended: bool = False) -> dict:
 
     # Pre-market gap: current live price vs last candle close
     last_close = close.iloc[-1]
-    gap_pct = round((current_price - last_close) / last_close * 100, 2) if last_close else 0.0
+    gap_pct = round((current_price - last_close) / last_close * 100, 2) if last_close else None
 
     # Determine trend
     signals = []
@@ -263,12 +304,9 @@ def analyze_instrument(symbol: str, extended: bool = False) -> dict:
         "ma_alignment": alignment,
         "gap_pct": gap_pct,
         "atr": round(atr_val, 4),
-        "chandelier": {
-            "long_stop": round(float(chandelier_long.iloc[-1]), 4),
-            "short_stop": round(float(chandelier_short.iloc[-1]), 4),
-            "trend_up": bool(st_direction.iloc[-1] == 1),
-            "supertrend": round(float(st_line.iloc[-1]), 4),
-        },
+        "chandelier": _build_chandelier_dict(
+            chandelier_long, chandelier_short, st_direction, st_line
+        ),
         "trend": trend,
         "signals": signals,
     }
@@ -326,15 +364,13 @@ def _fetch_vix_external() -> float | None:
     2. Finnhub quote for VIX — requires FINNHUB_API_KEY
     Returns None if all sources fail.
     """
-    import httpx
+    client = _get_vix_client()
 
     # 1. Yahoo Finance ^VIX (undocumented but stable chart API)
     try:
-        resp = httpx.get(
+        resp = client.get(
             "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX",
             params={"interval": "1d", "range": "1d"},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=8,
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -343,24 +379,23 @@ def _fetch_vix_external() -> float | None:
             if price and float(price) > 0:
                 return float(price)
     except Exception:
-        pass
+        _log.warning("VIX fetch from Yahoo Finance failed", exc_info=True)
 
     # 2. Finnhub quote for VIX (if API key configured)
     try:
         from config import settings
         finnhub_key = getattr(settings, "finnhub_api_key", "")
         if finnhub_key:
-            resp = httpx.get(
+            resp = client.get(
                 "https://finnhub.io/api/v1/quote",
                 params={"symbol": "CBOE:VIX", "token": finnhub_key},
-                timeout=8,
             )
             if resp.status_code == 200:
                 price = resp.json().get("c")  # current price
                 if price and float(price) > 0:
                     return float(price)
     except Exception:
-        pass
+        _log.warning("VIX fetch from Finnhub failed", exc_info=True)
 
     return None
 
@@ -441,12 +476,20 @@ def analyze_market_regime() -> dict[str, Any]:
     else:
         regime["errors"].append("VIX: Could not fetch from external sources (defaulting to NORMAL)")
 
-    # Overall market bias
+    # Overall market bias — requires at least one index to be available
+    spy_present = "spy" in regime
+    qqq_present = "qqq" in regime
+    if not spy_present and not qqq_present:
+        regime["bias"] = "UNKNOWN"
+        regime["bias_guidance"] = "Market data unavailable — cannot determine regime."
+        return regime
+
     spy_bull = regime.get("spy", {}).get("trend") == "BULLISH"
     qqq_bull = regime.get("qqq", {}).get("trend") == "BULLISH"
     spy_above_20 = regime.get("spy", {}).get("above_sma20", False)
     spy_above_50 = regime.get("spy", {}).get("above_sma50", False)
-    vix_ok = regime.get("vix", {}).get("value", 20) < 25
+    # Conservative default: when VIX is unavailable treat as NOT ok (avoid biasing to RISK_ON)
+    vix_ok = "vix" in regime and regime["vix"]["value"] < 25
 
     bull_score = sum([spy_bull, qqq_bull, spy_above_20, spy_above_50, vix_ok])
     if bull_score >= 4:
