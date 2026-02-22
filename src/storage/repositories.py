@@ -184,3 +184,14 @@ class InstrumentRepo:
         finally:
             conn.close()
 
+    def delete_by_symbol(self, symbol: str) -> bool:
+        conn = get_connection()
+        try:
+            cur = conn.execute(
+                "DELETE FROM instruments WHERE symbol = ? COLLATE NOCASE", (symbol,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
+
+from src.market.indicators import chandelier_exit, supertrend
+
 
 def calculate_atr_stops(
     price: float,
@@ -56,6 +61,75 @@ def calculate_atr_stops(
     }
 
 
+def calculate_chandelier_stops(
+    df: pd.DataFrame,
+    price: float,
+    direction: str = "BUY",
+    n: int = 22,
+    mult: float = 3.0,
+    supertrend_n: int = 14,
+    supertrend_mult: float = 3.0,
+    max_sl_pct: float = 15.0,
+    min_sl_pct: float = 1.0,
+) -> dict:
+    """Calculate Chandelier Exit stop-loss with SuperTrend trend filter.
+
+    Chandelier Exit anchors the stop to the highest high over n periods (for
+    BUY), so the stop retreats more slowly than a simple ATR trailing stop —
+    but can still decrease when ATR expands sharply. SuperTrend provides a
+    trend-state gate: when trend is bearish the stop is still returned but TSL
+    activation should be deferred.
+
+    Args:
+        df: OHLCV DataFrame with columns high, low, close (min n rows).
+        price: Current instrument price.
+        direction: "BUY" or "SELL".
+        n: Chandelier lookback period (22 for equities/ETFs, 14 for crypto).
+        mult: ATR multiplier for Chandelier stop distance (3.0 standard).
+        supertrend_n: SuperTrend ATR period.
+        supertrend_mult: SuperTrend ATR multiplier.
+        max_sl_pct: Maximum stop-loss as % of price (clamp).
+        min_sl_pct: Minimum stop-loss as % of price (clamp).
+
+    Returns:
+        dict with sl_rate, sl_pct, trend_up (bool), supertrend_value, method.
+        Returns {"error": ...} on invalid inputs.
+    """
+    if price <= 0:
+        return {"error": "Invalid price (must be > 0)"}
+    min_bars = max(n, supertrend_n)
+    if len(df) < min_bars:
+        return {"error": f"Insufficient data: need at least {min_bars} bars, got {len(df)}"}
+
+    long_stop, short_stop = chandelier_exit(df, n, mult)
+    st_line, st_direction = supertrend(df, supertrend_n, supertrend_mult)
+
+    is_buy = direction.upper() == "BUY"
+    raw_sl = float(long_stop.iloc[-1] if is_buy else short_stop.iloc[-1])
+    trend_up = bool(st_direction.iloc[-1] == 1)
+
+    if np.isnan(raw_sl):
+        return {"error": "Chandelier stop is NaN (insufficient data)"}
+
+    # Clamp distance to min/max percentage of price.
+    sl_pct = abs(price - raw_sl) / price * 100
+    sl_pct = max(min_sl_pct, min(sl_pct, max_sl_pct))
+
+    sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
+
+    st_val = float(st_line.iloc[-1])
+    if np.isnan(st_val):
+        return {"error": "SuperTrend line is NaN (insufficient warmup data)"}
+
+    return {
+        "sl_rate": round(sl_rate, 4),
+        "sl_pct": round(sl_pct, 2),
+        "trend_up": trend_up,
+        "supertrend_value": round(st_val, 4),
+        "method": "chandelier",
+    }
+
+
 # Conviction-level parameters: (risk_pct_of_portfolio, max_trade_usd)
 _CONVICTION = {
     "strong": (0.03, 3000.0),
@@ -99,11 +173,12 @@ def calculate_position_size(
     risk_pct, max_trade = _CONVICTION[conviction]
     risk_budget = portfolio_value * risk_pct
 
-    # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget
+    # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget.
+    # Guard against float underflow (atr/price → 0.0 for extreme value ratios) which
+    # would cause ZeroDivisionError in the next line even though atr > 0 was validated.
     atr_ratio = atr / price
     if atr_ratio <= 0:
-        return {"error": "ATR ratio is zero"}
-
+        return {"error": f"ATR ratio is zero (atr={atr}, price={price}) — cannot size position"}
     amount = risk_budget / atr_ratio
 
     # Cap by max trade size for this conviction level

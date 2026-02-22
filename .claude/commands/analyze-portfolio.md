@@ -1,5 +1,22 @@
 Perform a comprehensive multi-agent portfolio analysis with **screening**, **deep research**, and **user-approved trade execution**. You will orchestrate a team of specialized agents that work in parallel, synthesize their results, present a trade plan for user approval, and only then execute approved trades with post-trade verification. Follow these phases exactly.
 
+**Usage**: `/analyze-portfolio` or `/analyze-portfolio --mode demo`
+
+---
+
+## Mode Setup (parse from arguments)
+
+Check `$ARGUMENTS` for `--mode`:
+- `--mode demo` → set `TRADING_MODE=demo` — safe sandbox, no real money
+- `--mode real` or no argument → set `TRADING_MODE=real` (default) — **⚠️ REAL ACCOUNT — trades will use real money**
+
+Announce the mode prominently before Phase 0: `🔴 Mode: REAL — ALL TRADE EXECUTIONS WILL USE YOUR REAL eToro ACCOUNT` or `🔵 Mode: DEMO`.
+
+**Apply the mode to every command in this workflow:**
+- All `python3 cli.py ...` calls → prepend `TRADING_MODE={mode}` (e.g. `TRADING_MODE=real python3 cli.py portfolio --format json`)
+- All inline Python snippets → add `import os; os.environ['TRADING_MODE'] = '{mode}'` as the **very first line**, before any other imports
+- Also pass `--mode {mode}` to all subagent prompts so they can use the correct environment
+
 ---
 
 ## Phase 0: Initialize
@@ -16,6 +33,33 @@ print(f"Portfolio snapshot saved (ID: {snapshot_id})")
 
 ## Phase 1: Load History + Gather Portfolio Data + Build Universe
 
+### Step 1.0: Market Regime Check (Top-Down — Run FIRST)
+
+Before anything else, get the market "weather":
+
+```python
+from src.market.data import analyze_market_regime
+import json
+
+regime = analyze_market_regime()
+print(json.dumps(regime, indent=2, default=str))
+```
+
+Parse and save:
+- **SPY**: trend, RSI, above/below 20/50 SMA, MA alignment, RVOL
+- **QQQ**: trend, RSI, above/below 20/50 SMA
+- **VIX**: value, regime (VERY_LOW/LOW/NORMAL/ELEVATED/HIGH/EXTREME), sizing_adjustment
+- **Overall Bias**: RISK_ON / CAUTIOUS / RISK_OFF
+
+**Announce regime prominently:**
+```
+🌍 Market Regime: [RISK_ON/CAUTIOUS/RISK_OFF]
+SPY: [trend] | QQQ: [trend] | VIX: [value] ([regime])
+Sizing adjustment: [1.0x / 0.75x / 0.5x / 0.25x]
+```
+
+**Pass VIX data to ALL agents** in their prompts. VIX sizing_adjustment will be applied to all BUY amounts in Phase 4.
+
 ### Step 1.1: Get Current Portfolio
 
 Run this command to get the current portfolio state:
@@ -23,6 +67,24 @@ Run this command to get the current portfolio state:
 python3 cli.py portfolio --format json
 ```
 Parse the JSON output. Note total value, invested amount, P&L, cash available, and all open positions with their symbols, directions, amounts, P&L, and leverage. Save this as `portfolio_data` for use in agent prompts.
+
+**Sector Concentration Check** (run immediately after parsing — before building the universe):
+
+```python
+SEMICONDUCTOR_SYMBOLS = {
+    'NVDA','AMD','ASML','AMAT','MU','TSM','QCOM','MRVL','ARM','SMCI',
+    'INTC','KLAC','LRCX','ON','TXN'
+}
+chip_invested = sum(p['amount'] for p in positions if p['symbol'] in SEMICONDUCTOR_SYMBOLS)
+chip_pct = chip_invested / total_invested * 100 if total_invested > 0 else 0
+chip_syms = sorted({p['symbol'] for p in positions if p['symbol'] in SEMICONDUCTOR_SYMBOLS})
+
+if chip_pct > 30:
+    print(f"🔴 CHIP CONCENTRATION: {chip_pct:.0f}% in semiconductors: {', '.join(chip_syms)}")
+    print(f"   Systemic risk: sector-wide events (earnings, tariffs, demand cycle) gap all chip positions simultaneously.")
+    print(f"   → Do NOT recommend additional semiconductor BUYs in Phase 3 unless one is being sold first.")
+    print(f"   → Flag in Phase 3 Risk section with scenario: 'What if NVDA/chip leader misses earnings?'")
+```
 
 ### Step 1.2: Load History
 
@@ -38,7 +100,7 @@ Wait for the History Agent to return before proceeding.
 
 After getting portfolio data and watchlists, build the **instrument universe** for screening:
 
-1. Start with the hardcoded list of ~160 symbols below
+1. Start with the hardcoded list of ~200 symbols below
 2. Add symbols from eToro watchlists:
 ```python
 from src.portfolio.manager import get_watchlists
@@ -55,20 +117,32 @@ print(f"Watchlist symbols: {watchlist_symbols}")
 4. Deduplicate the combined list
 5. Split into **3 roughly equal batches** for the screening agents
 
-#### Hardcoded Universe (~160 symbols)
+#### Hardcoded Universe (~200 symbols)
 
 ```
 # US Mega-Cap Tech (15)
 AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, AVGO, ORCL, CRM, AMD, ADBE, NFLX, INTC, CSCO
 
 # US Large-Cap Tech / Growth (15)
-NOW, UBER, SHOP, SQ, SNOW, PLTR, PANW, CRWD, DDOG, NET, ZS, TEAM, MRVL, MU, ANET
+NOW, UBER, SHOP, XYZ, SNOW, PLTR, PANW, CRWD, DDOG, NET, ZS, TEAM, MRVL, MU, ANET
+
+# Semiconductors (7)
+ASML, TSM, KLAC, LRCX, QCOM, TXN, ON
+
+# AI / Cloud (4)
+SMCI, ARM, DELL, WDAY
 
 # Financials (10)
 JPM, BAC, GS, MS, V, MA, BLK, AXP, C, SCHW
 
+# Fintech (4)
+PYPL, COIN, SOFI, HOOD
+
 # Healthcare (10)
 UNH, JNJ, LLY, PFE, ABBV, MRK, TMO, ABT, AMGN, ISRG
+
+# Biotech (4)
+GILD, REGN, VRTX, MRNA
 
 # Defense & Aerospace (8)
 LMT, RTX, NOC, GD, LHX, HII, BA, LDOS
@@ -88,6 +162,9 @@ CAT, DE, GE, HON, UNP, MMM
 # Materials (4)
 LIN, APD, FCX, NEM
 
+# Commodities / Mining (4)
+VALE, BHP, RIO, GOLD
+
 # Real Estate (4)
 PLD, AMT, EQIX, SPG
 
@@ -97,23 +174,29 @@ NEE, DUK, SO
 # Communication (4)
 DIS, CMCSA, T, VZ
 
-# US Broad ETFs (8)
+# China ADRs (5)
+BABA, JD, PDD, BIDU, LI
+
+# European ADRs (4)
+SAP, NVO, AZN, SHEL
+
+# US Broad ETFs (8) — demo-restricted, used for benchmarking only
 SPY, QQQ, IWM, DIA, VTI, VOO, ARKK, XLK
 
-# Sector ETFs (10)
+# Sector ETFs (10) — demo-restricted
 XLE, XLF, XLV, XLI, XLP, XLY, XLU, XLB, XLRE, XLC
 
-# International ETFs (6)
+# International ETFs (6) — demo-restricted
 EFA, EEM, FXI, EWJ, EWG, EWZ
 
-# Bond / Income ETFs (5)
+# Bond / Income ETFs (5) — demo-restricted
 TLT, HYG, LQD, BND, SCHD
 
-# Commodity ETFs (4)
+# Commodity ETFs (4) — demo-restricted
 GLD, SLV, USO, UNG
 
-# Crypto (8)
-BTC, ETH, SOL, ADA, XRP, DOGE, DOT, AVAX
+# Crypto (11)
+BTC, ETH, SOL, ADA, XRP, DOGE, DOT, AVAX, LINK, UNI, NEAR
 ```
 
 Print the total universe size and batch sizes before proceeding to Phase 1.5.
@@ -131,6 +214,7 @@ Spawn **3 parallel batch-screener agents** in a SINGLE message with multiple Tas
 
 Each screening agent prompt should include ONLY the dynamic data:
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Your batch of symbols**: {paste batch N symbols}
 > **Portfolio positions in this batch** (MUST always include in results): {paste any portfolio symbols that fall in this batch}
 
@@ -154,13 +238,13 @@ The agent's system prompt already contains the full CSS formula, Section A/B out
 - Portfolio positions (always included): P symbols
 
 ### Portfolio Positions (mandatory deep analysis)
-| # | Symbol | CSS | Trend | RSI | ATR% | Price | Status |
-|---|--------|-----|-------|-----|------|-------|--------|
+| # | Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR% | Price |
+|---|--------|-----|-------|----------|-----|------|------|-------|
 (All current holdings — these are ALWAYS analyzed regardless of CSS score)
 
 ### Top New Candidates (sorted by CSS)
-| # | Symbol | CSS | Trend | RSI | ATR% | Price |
-|---|--------|-----|-------|-----|------|-------|
+| # | Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR% | Price |
+|---|--------|-----|-------|----------|-----|------|------|-------|
 ```
 
 This combined list (portfolio positions + top new candidates, typically ~30-45 symbols) is what Phase 2 agents will analyze in depth. **Every single portfolio holding MUST appear in the Phase 2 analysis.**
@@ -179,6 +263,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Technical analysis"`
 - Prompt (dynamic data only — the agent's system prompt already defines the full analysis process):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates** (from screening): {paste the filtered symbol list with CSS scores}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste position symbols and directions from Phase 1}
 
@@ -188,6 +273,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Fundamental analysis"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates**: {paste symbols from screening}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste symbols, directions, invested amounts from Phase 1}
 
@@ -197,6 +283,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Market news research"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Filtered candidates**: {paste symbols from screening with CSS scores}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste symbols from Phase 1}
 
@@ -206,6 +293,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 - `description: "Risk assessment"`
 - Prompt (dynamic data only):
 
+> **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
 > **Current portfolio positions**: {paste full position details — symbols, amounts, P&L, leverage, direction}
 > **Portfolio totals**: {paste total value, invested, cash, overall P&L from Phase 1}
 > **Filtered candidates for potential ADD**: {paste candidate symbols}
@@ -245,24 +333,30 @@ For EACH position in portfolio AND each new candidate with a BUY recommendation,
 ```markdown
 ## Proposed Trade Plan
 
+### Market Regime Context
+- Bias: [RISK_ON/CAUTIOUS/RISK_OFF] | VIX: [value] ([regime]) | Sizing: [1.0x/0.75x/0.5x/0.25x]
+
 ### SELL Orders
 | # | Symbol | Position ID | Amount | Current P&L | Reason |
 |---|--------|-------------|--------|-------------|--------|
 
 ### BUY Orders
-| # | Symbol | Amount | Conviction | ATR SL | ATR TP | Trail | Reason |
-|---|--------|--------|------------|--------|--------|-------|--------|
+| # | Symbol | Amount | Conviction | Entry Zone | Hard SL | TP1 | TP2 | R:R | Setup Score | Trail | RVOL | Reason |
+|---|--------|--------|------------|------------|---------|-----|-----|-----|-------------|-------|------|--------|
+(Amounts adjusted for VIX sizing. R:R must be >= 1:2. Earnings must be > 5 days away.)
 
 ### HOLD (no action)
-| # | Symbol | Amount | P&L | Note |
-|---|--------|--------|-----|------|
+| # | Symbol | Amount | P&L | Trend | MA Align | Note |
+|---|--------|--------|-----|-------|----------|------|
 
 ### Summary
 - Total SELL: $X (freeing capital)
-- Total BUY: $Y (new deployment)
+- Total BUY: $Y (new deployment, VIX-adjusted)
 - Net cash change: +/-$Z
 - Post-trade exposure: X%
 - Estimated total spread/commission cost: $W
+- Average R:R of BUY orders: X:Y
+- Average Setup Score of BUY orders: X/10
 ```
 
 ### Step 3.4: HARD GATE — WAIT FOR USER APPROVAL
@@ -298,7 +392,7 @@ portfolio = get_portfolio()
 trade_repo = TradeLogRepo()
 daily_stats = trade_repo.get_today_stats()
 daily_loss = daily_stats.get("realized_pnl", 0)
-total_value = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
+total_value = portfolio.total_value
 
 if total_value > 0 and daily_loss < 0:
     daily_loss_pct = abs(daily_loss) / total_value
@@ -326,7 +420,7 @@ print(f"SELL {SYMBOL}: {result.message}")
 
 # Post-trade verification
 if result.success:
-    time.sleep(2)
+    time.sleep(8)
     portfolio = get_portfolio()
     still_exists = any(
         getattr(p, 'position_id', None) == POSITION_ID
@@ -349,7 +443,7 @@ import time
 
 # Refresh portfolio after any SELLs
 portfolio = get_portfolio()
-_total_value = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
+_total_value = portfolio.total_value
 
 # 1. Calculate position size (use ATR + conviction from synthesis)
 sizing = calculate_position_size(
@@ -358,7 +452,7 @@ sizing = calculate_position_size(
     atr=ATR_VALUE,                    # from Technical Agent
     price=CURRENT_PRICE,              # from Technical Agent
     conviction="strong|moderate|weak", # from Phase 3 consensus
-    current_exposure_pct=portfolio.total_invested / _total_value if _total_value > 0 else 0,
+    current_exposure_pct=portfolio.total_invested / portfolio.total_value if portfolio.total_value > 0 else 0,
 )
 
 if sizing.get("amount", 0) >= 50:
@@ -376,7 +470,7 @@ if sizing.get("amount", 0) >= 50:
 
     # 3. Post-trade verification
     if result.success:
-        time.sleep(2)
+        time.sleep(8)
         portfolio = get_portfolio()
         # resolve_symbol returns a dict {'instrument_id': int, ...}, NOT a bare int
         iid_data = resolve_symbol("SYMBOL")
@@ -411,22 +505,32 @@ After SELLs and before BUYs, check for oversized positions. Since eToro doesn't 
 ```python
 from src.portfolio.manager import get_portfolio
 portfolio = get_portfolio()
-_tv = portfolio.total_invested + portfolio.cash_available  # PortfolioSummary has no .total_value
 print(f"\n=== Final Portfolio State ===")
-print(f"Total: ${_tv:.2f}")
+print(f"Total: ${portfolio.total_value:.2f}")
 print(f"Cash: ${portfolio.cash_available:.2f}")
 print(f"Invested: ${portfolio.total_invested:.2f}")
 print(f"Positions: {len(portfolio.positions)}")
-print(f"Exposure: {(portfolio.total_invested / _tv * 100):.1f}%")
+print(f"Exposure: {(portfolio.total_invested / portfolio.total_value * 100):.1f}%" if portfolio.total_value > 0 else "Exposure: 0%")
 ```
 
 ---
 
 ## Phase 5: Update Changelog
 
-After presenting the analysis AND executing approved trades (or noting cancellation), update the portfolio changelog. Use the Edit tool to add a new entry to `/Users/michalprusek/.claude/projects/-Users-michalprusek-PycharmProjects-etoro/memory/portfolio_changelog.md`.
+After presenting the analysis AND executing approved trades (or noting cancellation), update the portfolio changelog.
 
-Insert the new entry right after the `<!-- New entries are prepended below this line -->` marker. Format:
+**CRITICAL: Use the Edit tool — NEVER Python inline code.** Python string manipulation with `content.find()` + slicing corrupts the file when markdown contains backtick characters. The Edit tool handles this safely.
+
+**Steps:**
+1. Use the **Read tool** to read the first 15 lines of the changelog to get the marker line and the header of the current top entry
+2. Use the **Edit tool** with:
+   - `old_string` = the exact marker + blank line + the **first line of the current top entry** (e.g. `<!-- New entries are prepended below this line -->\n\n## 2026-02-21 Morning Check`)
+   - `new_string` = marker + blank line + your **new full entry** + blank line + that same first line of the existing entry
+3. Verify by reading the first 20 lines — confirm your new entry is at the top
+
+File: `/Users/michalprusek/.claude/projects/-Users-michalprusek-PycharmProjects-etoro/memory/portfolio_changelog.md`
+
+New entry format:
 
 ```markdown
 ## YYYY-MM-DD — Analysis #N
@@ -479,16 +583,42 @@ Increment the analysis number based on how many entries already exist. Use today
 ---
 
 ## Rules
+
+### Position Sizing & Risk
 - Use **AggressiveRiskLimits** for all trades: $50-$3000 per trade, max 20% concentration, max 95% exposure, 1x leverage only
-- **Always use ATR-based SL/TP** with trailing stop enabled (`trailing_sl=True`)
 - **Always use conviction-based position sizing** via `calculate_position_size()` — never hardcode amounts
+- **Apply VIX sizing adjustment**: multiply all BUY amounts by `regime["vix"]["sizing_adjustment"]` (1.0 for VIX<20, 0.75 for 20-25, 0.5 for 25-30, 0.25 for >30)
 - Respect daily loss circuit breaker (5%) — halt ALL execution if triggered
+- **NO leverage** — always 1x. Reject any leveraged trade suggestions.
+
+### Trade Quality Filters
+- **Always use ATR-based SL/TP** with trailing stop enabled (`trailing_sl=True`)
+- **R:R ratio must be >= 1:2** — reject any BUY setup where potential reward to first resistance is less than 2x the risk to stop-loss
+- **BLOCK new BUYs if earnings < 5 days** — never hold through earnings in swing trading (gap risk is unacceptable)
+- **Prefer RVOL > 1.0** for BUY entries — price moves without volume confirmation have higher failure rates
+- **Prefer GOLDEN or MOSTLY_BULLISH MA alignment** — trading against all MAs has very low swing trade success rate
+- Each BUY candidate must have an **Entry Zone** (range), **Hard SL** (support - ATR), **TP1** (nearest resistance), and **Setup Score** (0-10)
+
+### Fees & Costs
 - Factor in fees — avoid trades where fees eat >2% of expected gain. Pay special attention to:
   - Overnight/weekend fees on CFD positions (SELL direction or leveraged)
   - 1% crypto buy/sell fee
   - Spread costs on frequent trading
 - Be conservative with SELL verdicts — prefer HOLD over unnecessary churning (spread cost of closing + re-opening)
-- **NO leverage** — always 1x. Reject any leveraged trade suggestions.
+
+### Market Regime Awareness
+- **Always run Market Regime Check** (Step 1.0) before any analysis
+- Pass VIX data, bias, and sizing_adjustment to all agents
+- If bias is **RISK_OFF**: minimize new BUY suggestions, focus on protecting capital
+- If **RED FLAG macro day** (CPI, FOMC, NFP, PCE): recommend smaller positions or delay entry
+
+### Smart Money Data (Best Effort via WebSearch)
+- Check insider trading for all [PORTFOLIO] positions + top BUY candidates
+- Check short interest for top 10 candidates
+- Check unusual options activity for top 5 BUY candidates
+- Factor smart money signals into conviction assessment
+
+### General
 - Flag any positions approaching earnings dates (risk of gap)
 - Note dividend ex-dates for income-oriented positions
 - Reference prior analysis decisions from changelog when relevant

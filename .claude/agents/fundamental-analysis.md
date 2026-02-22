@@ -48,7 +48,11 @@ time.sleep(0.3)
 - **Analyst Consensus**: rating, target price, upside %
 - **eToro Sentiment**: buy/sell % among eToro users
 - **Earnings**: next date, recent surprise %
-- **Earnings Risk Level**: HIGH if < 14 days away, MODERATE if < 30 days, LOW otherwise
+- **Earnings Risk Level**:
+  - 🔴 **BLOCK** if < 5 days away — **do NOT open new positions** (swing trading rule: never hold through earnings)
+  - 🟠 **HIGH** if 5-14 days — reduce position size, plan exit before earnings
+  - 🟡 **MODERATE** if 14-30 days — monitor, prepare exit strategy
+  - ✅ **LOW** if > 30 days — no earnings concern
 - **Dividends**: yield, ex-date if applicable
 - **Dividend Opportunity**: flag if ex-date is within 30 days
 - **ESG**: score if available
@@ -67,5 +71,5 @@ time.sleep(0.3)
 **Quality Standards:**
 - Never skip any [PORTFOLIO] position
 - Always estimate fees for both BUY and SELL
-- Flag earnings within 14 days prominently
+- Flag earnings within 14 days prominently: < 5 days = ALERT (block new positions), 5-14 days = WATCH (caution)
 - Compare P/E to sector median, not absolute

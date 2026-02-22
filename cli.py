@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Optional
+
+# Early mode detection — must happen before src.storage.database is imported,
+# which triggers config.py to call Settings() as a module-level singleton.
+_mode_idx = next((i for i, a in enumerate(sys.argv) if a == "--mode"), None)
+if _mode_idx is not None and _mode_idx + 1 < len(sys.argv):
+    os.environ["TRADING_MODE"] = sys.argv[_mode_idx + 1]
+del _mode_idx
 
 import typer
 from rich.console import Console
@@ -214,9 +222,28 @@ def market_analyze(
         console.print(f"  RSI:     {r['rsi']}")
         console.print(f"  MACD:    line={r['macd']['line']}  signal={r['macd']['signal']}  hist={r['macd']['histogram']}")
         console.print(f"  BB:      upper={r['bollinger']['upper']}  mid={r['bollinger']['middle']}  lower={r['bollinger']['lower']}")
-        console.print(f"  SMA:     20={r['sma_20']}  50={r['sma_50']}")
-        console.print(f"  EMA:     12={r['ema_12']}  26={r['ema_26']}")
+        sma200_str = f"  200={r['sma_200']}" if r.get("sma_200") else ""
+        console.print(f"  SMA:     20={r['sma_20']}  50={r['sma_50']}{sma200_str}")
+        console.print(f"  EMA:     8={r.get('ema_8', 'N/A')}  12={r['ema_12']}  21={r.get('ema_21', 'N/A')}  26={r['ema_26']}")
         console.print(f"  ATR:     {r['atr']}")
+        if r.get("rvol") is not None:
+            rvol_val = r["rvol"]
+            rvol_color = "green" if rvol_val >= 1.5 else "red" if rvol_val < 0.5 else "white"
+            console.print(f"  RVOL:    [{rvol_color}]{rvol_val:.2f}x[/{rvol_color}]")
+        if r.get("ma_alignment"):
+            ma = r["ma_alignment"]
+            ma_color = {"GOLDEN": "green", "MOSTLY_BULLISH": "green", "DEATH": "red", "MOSTLY_BEARISH": "red"}.get(ma["status"], "yellow")
+            console.print(f"  MA:      [{ma_color}]{ma['status']}[/{ma_color}] (bull={ma['bullish_layers']} bear={ma['bearish_layers']})")
+        if r.get("gap_pct") and abs(r["gap_pct"]) >= 0.5:
+            gap_color = "green" if r["gap_pct"] > 0 else "red"
+            console.print(f"  Gap:     [{gap_color}]{r['gap_pct']:+.2f}%[/{gap_color}]")
+        if r.get("chandelier"):
+            ch = r["chandelier"]
+            trend_gate = "[green]TSL OK[/green]" if ch["trend_up"] else "[yellow]trend bearish[/yellow]"
+            console.print(
+                f"  TSL:     stop=${ch['long_stop']:,.4f}  "
+                f"ST=${ch['supertrend']:,.4f}  {trend_gate}"
+            )
         if r.get("signals"):
             console.print(f"  Signals: {', '.join(r['signals'])}")
 
@@ -840,7 +867,12 @@ def config_set(
 # ── Init DB on startup ─────────────────────────────────────────────────
 
 @app.callback()
-def main_callback():
+def main_callback(
+    mode: Optional[str] = typer.Option(None, "--mode", help="Trading mode: demo or real"),
+):
+    if mode is not None and mode not in ("demo", "real"):
+        console.print("[red]--mode must be 'demo' or 'real'[/red]")
+        raise typer.Exit(1)
     init_db()
 
 
