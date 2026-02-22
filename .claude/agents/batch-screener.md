@@ -63,8 +63,8 @@ time.sleep(0.5)  # rate limit protection
 **Post-CSS Adjustments (apply AFTER base CSS calculation):**
 - **RVOL bonus**: If `result["rvol"]` > 1.5: CSS += 5 (volume confirms institutional interest)
 - **RVOL penalty**: If `result["rvol"]` < 0.5: CSS -= 5 (no conviction behind price move)
-- **MA Alignment bonus**: If `result["ma_alignment"]["status"]` == "GOLDEN": CSS += 5 (all MAs perfectly stacked)
-- **MA Alignment penalty**: If `result["ma_alignment"]["status"]` == "DEATH": CSS -= 10 (all MAs bearish)
+- **MA Alignment bonus**: If `result["ma_alignment"]["status"]` == "MOSTLY_BULLISH": CSS += 5 (MAs well-aligned bullish)
+- **MA Alignment penalty**: If `result["ma_alignment"]["status"]` == "MOSTLY_BEARISH": CSS -= 10 (MAs well-aligned bearish)
 - Clamp final CSS to [0, 100]
 
 **Output Format — TWO sections:**

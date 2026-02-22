@@ -137,8 +137,9 @@ def chandelier_exit(
     """Chandelier Exit trailing stop levels.
 
     Anchors the stop to the highest high (long) or lowest low (short) over n
-    periods rather than the current close. This means the long stop only moves
-    up — it never retreats — so profits are protected as the trade advances.
+    periods rather than the current close. The long stop retreats more slowly
+    than a simple ATR trailing stop, but can still decrease when ATR expands
+    sharply, so profits are gradually locked in as the trade advances.
 
     Args:
         df: OHLCV DataFrame with columns high, low, close.
@@ -227,6 +228,8 @@ def rvol(df: pd.DataFrame, lookback: int = 30) -> float:
         return float("nan")
     vol = df["volume"]
     current_vol = vol.iloc[-1]
+    if pd.isna(current_vol):
+        return float("nan")
     avg_vol = vol.iloc[-lookback - 1 : -1].mean() if len(vol) > lookback else vol.iloc[:-1].mean()
     if avg_vol == 0 or pd.isna(avg_vol):
         return float("nan")

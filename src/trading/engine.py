@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import pandas as pd
+
 from config import settings, RiskLimits
 from src.api.client import EtoroClient
 from src.api import endpoints
@@ -35,7 +37,7 @@ def open_position(
     atr_value: float | None = None,
     trailing_sl: bool = False,
     limits_override: RiskLimits | None = None,
-    df=None,
+    df: pd.DataFrame | None = None,
 ) -> TradeResult:
     trade_log = TradeLogRepo()
     active_limits = limits_override or settings.risk
@@ -71,13 +73,16 @@ def open_position(
 
     # Calculate SL rates — priority: Chandelier Exit > ATR-based > percentage.
     # TP is always percentage-based (Chandelier is a trailing stop, not a TP tool).
+    # The guard len(df) >= 22 matches calculate_chandelier_stops default min_bars=max(22,14).
     tp_rate = price * (1 + tp_pct / 100) if is_buy else price * (1 - tp_pct / 100)
+    sl_method = "pct"
 
     if df is not None and len(df) >= 22:
         chandelier = calculate_chandelier_stops(df, price, direction)
         if "error" not in chandelier:
             sl_rate = chandelier["sl_rate"]
-            # Enable TSL automatically when SuperTrend confirms the trend.
+            sl_method = "chandelier"
+            # Enable TSL automatically for BUY when SuperTrend confirms the trend.
             if chandelier["trend_up"] and direction.upper() == "BUY":
                 trailing_sl = True
         else:
@@ -85,6 +90,7 @@ def open_position(
                 "Chandelier stop failed for %s (%s) — falling back to percentage SL",
                 symbol, chandelier.get("error"),
             )
+            sl_method = f"pct-fallback({chandelier.get('error')})"
             sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
     elif atr_value and atr_value > 0:
         atr_stops = calculate_atr_stops(price, atr_value, direction)
@@ -93,6 +99,7 @@ def open_position(
         else:
             sl_rate = atr_stops["sl_rate"]
             tp_rate = atr_stops["tp_rate"]
+            sl_method = "atr"
     else:
         sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
 
@@ -114,7 +121,7 @@ def open_position(
         result = TradeResult(
             success=True,
             position_id=position_id,
-            message=f"Opened {direction} {symbol} for ${amount}",
+            message=f"Opened {direction} {symbol} for ${amount} [SL: {sl_method}]",
             raw=resp,
         )
         trade_log.log_trade(iid, symbol, direction, amount, "executed",
@@ -229,6 +236,7 @@ def create_limit_order(
                            result=resp, reason=f"LIMIT@{limit_price} {reason or ''}")
         return result
     except Exception as e:
+        _log.exception("create_limit_order failed for %s @ $%s", symbol, limit_price)
         result = TradeResult(success=False, message=str(e))
         trade_log.log_trade(iid, symbol, direction, amount, "error",
                            result={"error": str(e)}, reason=reason)

@@ -64,7 +64,7 @@ for p in positions:   # positions = list of dicts from portfolio JSON
         if dist_pct > 15:
             loose_sl.append(f"{sym} ({dist_pct:.0f}%)")
         if p.get('direction') == 'BUY' and sl > price:
-            sl_above_price.append(sym)   # chandelier above price = bearish SuperTrend
+            sl_above_price.append(sym)   # existing SL is above current price (likely stale)
 
     # Legacy TP (stale artifact from old entry price)
     if tp > 0 and price > 0 and (tp / price - 1) > 0.5:
@@ -377,7 +377,7 @@ result = close_position(
 print(f"SELL {SYMBOL}: {result.message}")
 
 if result.success:
-    time.sleep(2)
+    time.sleep(8)
     portfolio = get_portfolio()
     still_exists = any(
         getattr(p, 'position_id', None) == POSITION_ID
@@ -422,7 +422,7 @@ if sizing.get("amount", 0) >= 50:
     print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
 
     if result.success:
-        time.sleep(2)
+        time.sleep(8)
         portfolio = get_portfolio()
         iid_data = resolve_symbol("SYMBOL")
         iid = iid_data['instrument_id'] if isinstance(iid_data, dict) else iid_data

@@ -91,11 +91,11 @@ $10–$1000 per trade, max 10% concentration, max 90% exposure, max 20 positions
 
 ### Chandelier Exit + SuperTrend Stops (`src/trading/atr_stops.py`, `src/market/indicators.py`)
 
-- `calculate_chandelier_stops(df, price, direction)` — **primary TSL method**. Stop = `Highest_High(22) - 3×ATR` for BUY (never retreats as price rises). SuperTrend (14/3) provides trend-state gate. Returns `sl_rate`, `sl_pct`, `trend_up`, `supertrend_value`, `method="chandelier"`.
+- `calculate_chandelier_stops(df, price, direction)` — **primary TSL method**. Stop = `Highest_High(22) - 3×ATR` for BUY (retreats more slowly than a simple ATR trailing stop, but can still decrease when ATR expands sharply). SuperTrend (14/3) provides trend-state gate. Returns `sl_rate`, `sl_pct`, `trend_up`, `supertrend_value`, `method="chandelier"`.
 - `calculate_atr_stops(price, atr, direction)` — legacy scalar fallback (2x ATR for SL, 3x ATR for TP, clamped 1-15%). Used when OHLC df not available.
 - `calculate_position_size(portfolio_value, cash, atr, price, conviction)` — conviction-based sizing: strong (3% risk, $3K max), moderate (2%, $1.5K), weak (1%, $500). ATR-adjusted, $200 cash buffer, halved if exposure >80%.
-- `open_position()` accepts `df` (OHLCV DataFrame for Chandelier stops), `atr_value` (scalar fallback), `trailing_sl`, `limits_override`. **TSL auto-enabled when df provided and SuperTrend is bullish.**
-- `analyze_instrument()` now returns `chandelier.long_stop`, `chandelier.short_stop`, `chandelier.trend_up`, `chandelier.supertrend` in every analysis result.
+- `open_position()` accepts `df` (OHLCV DataFrame for Chandelier stops), `atr_value` (scalar fallback), `trailing_sl`, `limits_override`. **TSL auto-enabled for BUY positions when df is provided and SuperTrend is bullish** (`chandelier["trend_up"] == True`). TSL is never auto-enabled for SELL direction.
+- `analyze_instrument()` returns `chandelier.long_stop`, `chandelier.short_stop`, `chandelier.trend_up`, `chandelier.supertrend` in every analysis result.
 
 **TSL recommendation for existing positions (eToro UI manual entry):**
 1. Run `python3 cli.py market analyze SYMBOL` → get `chandelier.long_stop` value.
@@ -111,7 +111,7 @@ $10–$1000 per trade, max 10% concentration, max 90% exposure, max 20 positions
 
 ### Technical Indicators
 
-6 core (SMA, EMA, RSI, MACD, Bollinger Bands, ATR) + 5 extended (Stochastic, ADX, OBV, Support/Resistance, Fibonacci Retracement) + 2 swing-trading (RVOL, MA Alignment). Extended indicators available via `analyze_instrument(symbol, extended=True)`.
+6 core (SMA, EMA, RSI, MACD, Bollinger Bands, ATR) + 5 extended (Stochastic, ADX, OBV, Support/Resistance, Fibonacci Retracement — all require `extended=True`) + 6 swing-trading (ema_8, ema_21, sma_200, rvol, ma_alignment, gap_pct — always computed).
 
 **Swing-Trading Indicators** (always included in `analyze_instrument()` output):
 - `ema_8`, `ema_21`: Short-term momentum MAs for swing entry/exit timing

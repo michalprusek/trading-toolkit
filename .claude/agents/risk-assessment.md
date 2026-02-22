@@ -64,7 +64,7 @@ python3 cli.py memory list --limit 20
   List the groups and flag if adding candidates would create dangerous concentration.
 
 - **VIX Risk Assessment** (from market regime check):
-  - Current VIX value and regime (LOW/NORMAL/ELEVATED/HIGH/EXTREME)
+  - Current VIX value and regime (VERY_LOW/LOW/NORMAL/ELEVATED/HIGH/EXTREME)
   - **Position sizing adjustment**: multiply all new position sizes by sizing_adjustment (1.0 for VIX<20, 0.75 for 20-25, 0.5 for 25-30, 0.25 for >30)
   - If VIX > 25: recommend halting all new long positions unless strong oversold bounce setups
   - Historical context: is VIX trending up or down?

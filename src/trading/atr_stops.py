@@ -75,9 +75,10 @@ def calculate_chandelier_stops(
     """Calculate Chandelier Exit stop-loss with SuperTrend trend filter.
 
     Chandelier Exit anchors the stop to the highest high over n periods (for
-    BUY), so the stop ratchets upward as new highs form — it never moves back
-    down. SuperTrend provides a trend-state gate: when trend is bearish the
-    stop is still returned but TSL activation should be deferred.
+    BUY), so the stop retreats more slowly than a simple ATR trailing stop —
+    but can still decrease when ATR expands sharply. SuperTrend provides a
+    trend-state gate: when trend is bearish the stop is still returned but TSL
+    activation should be deferred.
 
     Args:
         df: OHLCV DataFrame with columns high, low, close (min n rows).
@@ -116,11 +117,15 @@ def calculate_chandelier_stops(
 
     sl_rate = price * (1 - sl_pct / 100) if is_buy else price * (1 + sl_pct / 100)
 
+    st_val = float(st_line.iloc[-1])
+    if np.isnan(st_val):
+        return {"error": "SuperTrend line is NaN (insufficient warmup data)"}
+
     return {
         "sl_rate": round(sl_rate, 4),
         "sl_pct": round(sl_pct, 2),
         "trend_up": trend_up,
-        "supertrend_value": round(float(st_line.iloc[-1]), 4),
+        "supertrend_value": round(st_val, 4),
         "method": "chandelier",
     }
 
@@ -168,8 +173,12 @@ def calculate_position_size(
     risk_pct, max_trade = _CONVICTION[conviction]
     risk_budget = portfolio_value * risk_pct
 
-    # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget
+    # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget.
+    # Guard against float underflow (atr/price → 0.0 for extreme value ratios) which
+    # would cause ZeroDivisionError in the next line even though atr > 0 was validated.
     atr_ratio = atr / price
+    if atr_ratio <= 0:
+        return {"error": f"ATR ratio is zero (atr={atr}, price={price}) — cannot size position"}
     amount = risk_budget / atr_ratio
 
     # Cap by max trade size for this conviction level

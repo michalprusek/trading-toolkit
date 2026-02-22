@@ -56,8 +56,7 @@ for symbol in PORTFOLIO_SYMBOLS:
 - **Analyst Changes**: any upgrades/downgrades?
 - **Earnings Date**: when is the next earnings?
   - **< 5 days**: 🔴 **EARNINGS BLOCK** — do NOT open new positions, consider closing if no strong thesis
-  - **5-7 days**: 🟠 **EARNINGS ALERT** — high gap risk, reduce position size
-  - **7-14 days**: 🟡 **EARNINGS WATCH** — monitor, plan exit strategy
+  - **5-14 days**: 🟡 **EARNINGS WATCH** — gap risk, plan exit strategy or reduce position size
   - **> 14 days**: ✅ **SAFE** — no earnings concern
 - **Dividend**: upcoming ex-date if within 14 days
 - **Insider Activity**: any notable buys/sells (if checked via WebSearch)

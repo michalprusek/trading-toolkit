@@ -114,9 +114,36 @@ class TestCalculatePositionSize:
             atr=5, price=100, conviction="moderate",
             current_exposure_pct=0.85,
         )
-        # High exposure result should be roughly half
-        if normal.get("amount") and halved.get("amount"):
-            assert halved["amount"] < normal["amount"]
+        assert normal.get("amount", 0) > 0
+        assert halved.get("amount", 0) > 0
+        assert halved["amount"] < normal["amount"]
+
+    def test_exposure_exactly_80pct_does_not_halve(self):
+        # Condition is strictly > 0.80, so 0.80 exactly should NOT trigger halving
+        normal = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            current_exposure_pct=0.50,
+        )
+        at_threshold = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            current_exposure_pct=0.80,
+        )
+        assert at_threshold.get("amount") == normal.get("amount")
+
+    def test_exposure_above_80pct_halves(self):
+        normal = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            current_exposure_pct=0.50,
+        )
+        above_threshold = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            current_exposure_pct=0.801,
+        )
+        assert above_threshold["amount"] == pytest.approx(normal["amount"] / 2, rel=0.01)
 
     def test_cash_buffer_respected(self):
         # $250 cash → usable = $50 (250 - 200 buffer); capped below ATR-based amount

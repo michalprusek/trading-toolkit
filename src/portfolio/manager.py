@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
+
 from src.api.client import EtoroClient
 from src.api import endpoints
 from src.api.models import Position, PortfolioSummary
@@ -30,9 +32,15 @@ def enrich_positions_with_rates(positions: list[Position]) -> list[Position]:
     iids = list({p.instrument_id for p in needs_rate})
     try:
         rates = get_rates(iids)
-    except Exception:
+    except (httpx.HTTPError, httpx.TimeoutException) as e:
         _log.warning(
-            "Failed to enrich %d positions with live rates — P&L will show $0",
+            "Failed to enrich %d positions with live rates (network: %s) — P&L will show $0",
+            len(iids), e,
+        )
+        return positions
+    except Exception:
+        _log.error(
+            "Unexpected error enriching %d positions with live rates — P&L will show $0",
             len(iids),
             exc_info=True,
         )

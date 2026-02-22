@@ -238,13 +238,13 @@ The agent's system prompt already contains the full CSS formula, Section A/B out
 - Portfolio positions (always included): P symbols
 
 ### Portfolio Positions (mandatory deep analysis)
-| # | Symbol | CSS | Trend | RSI | ATR% | Price | Status |
-|---|--------|-----|-------|-----|------|-------|--------|
+| # | Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR% | Price |
+|---|--------|-----|-------|----------|-----|------|------|-------|
 (All current holdings — these are ALWAYS analyzed regardless of CSS score)
 
 ### Top New Candidates (sorted by CSS)
-| # | Symbol | CSS | Trend | RSI | ATR% | Price |
-|---|--------|-----|-------|-----|------|-------|
+| # | Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR% | Price |
+|---|--------|-----|-------|----------|-----|------|------|-------|
 ```
 
 This combined list (portfolio positions + top new candidates, typically ~30-45 symbols) is what Phase 2 agents will analyze in depth. **Every single portfolio holding MUST appear in the Phase 2 analysis.**
@@ -420,7 +420,7 @@ print(f"SELL {SYMBOL}: {result.message}")
 
 # Post-trade verification
 if result.success:
-    time.sleep(2)
+    time.sleep(8)
     portfolio = get_portfolio()
     still_exists = any(
         getattr(p, 'position_id', None) == POSITION_ID
@@ -470,7 +470,7 @@ if sizing.get("amount", 0) >= 50:
 
     # 3. Post-trade verification
     if result.success:
-        time.sleep(2)
+        time.sleep(8)
         portfolio = get_portfolio()
         # resolve_symbol returns a dict {'instrument_id': int, ...}, NOT a bare int
         iid_data = resolve_symbol("SYMBOL")

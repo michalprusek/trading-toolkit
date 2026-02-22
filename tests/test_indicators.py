@@ -5,7 +5,7 @@ import pytest
 from src.market.indicators import (
     sma, ema, rsi, macd, bollinger_bands, atr,
     stochastic, adx, obv, support_resistance, fibonacci_retracement,
-    chandelier_exit, supertrend,
+    chandelier_exit, supertrend, rvol, ma_alignment,
 )
 
 
@@ -196,7 +196,6 @@ class TestRVOL:
         df = ohlcv_df.copy()
         df["volume"] = 1000.0
         # All volumes equal → RVOL should be ~1.0
-        from src.market.indicators import rvol
         result = rvol(df)
         assert result == pytest.approx(1.0, abs=0.01)
 
@@ -204,7 +203,6 @@ class TestRVOL:
         df = ohlcv_df.copy()
         df["volume"] = 1000.0
         df.iloc[-1, df.columns.get_loc("volume")] = 3000.0
-        from src.market.indicators import rvol
         result = rvol(df)
         assert result > 2.5
 
@@ -212,50 +210,65 @@ class TestRVOL:
         df = ohlcv_df.copy()
         df["volume"] = 1000.0
         df.iloc[-1, df.columns.get_loc("volume")] = 200.0
-        from src.market.indicators import rvol
         result = rvol(df)
         assert result < 0.3
 
     def test_rvol_no_volume_column(self):
         df = pd.DataFrame({"close": [100, 101, 102]})
-        from src.market.indicators import rvol
         result = rvol(df)
+        assert pd.isna(result)
+
+    def test_rvol_short_data_uses_available_bars(self):
+        """When len(df) <= lookback, uses all available bars except the last as average."""
+        # 10 bars, lookback=30 → falls back to vol.iloc[:-1].mean()
+        df = pd.DataFrame({
+            "close": [100.0] * 10,
+            "high": [101.0] * 10,
+            "low": [99.0] * 10,
+            "volume": [1000.0] * 9 + [2000.0],  # last bar is 2x average
+        })
+        result = rvol(df, lookback=30)
+        assert result == pytest.approx(2.0, abs=0.01)
+
+    def test_rvol_nan_current_volume_returns_nan(self):
+        """NaN in the current (last) volume bar should return NaN, not crash."""
+        df = pd.DataFrame({
+            "close": [100.0] * 5,
+            "high": [101.0] * 5,
+            "low": [99.0] * 5,
+            "volume": [1000.0, 1000.0, 1000.0, 1000.0, float("nan")],
+        })
+        result = rvol(df, lookback=3)
         assert pd.isna(result)
 
 
 class TestMAAlignment:
     def test_golden_alignment(self):
-        from src.market.indicators import ma_alignment
         result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=120)
         assert result["status"] == "GOLDEN"
         assert result["bullish_layers"] == 3
 
     def test_death_alignment(self):
-        from src.market.indicators import ma_alignment
         result = ma_alignment(price=100, ema_21=110, sma_50=120, sma_200=130)
         assert result["status"] == "DEATH"
         assert result["bearish_layers"] == 3
 
     def test_mostly_bullish(self):
-        from src.market.indicators import ma_alignment
         # Price > EMA21 > SMA50, but SMA50 < SMA200
         result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=135)
         assert result["status"] == "MOSTLY_BULLISH"
 
     def test_mixed(self):
-        from src.market.indicators import ma_alignment
         # 1 bullish (price > ema21), 1 bearish (ema21 < sma50), sma50 == sma200 → MIXED
         result = ma_alignment(price=150, ema_21=140, sma_50=145, sma_200=145)
         assert result["status"] == "MIXED"
 
     def test_mostly_bearish(self):
-        from src.market.indicators import ma_alignment
         # Price < EMA21 < SMA50, but SMA50 > SMA200 → 2 bearish layers, not DEATH
         result = ma_alignment(price=100, ema_21=110, sma_50=120, sma_200=115)
         assert result["status"] == "MOSTLY_BEARISH"
 
     def test_nan_sma200(self):
-        from src.market.indicators import ma_alignment
         # price > ema_21 > sma_50 but sma_200 unavailable → SMA200 layer excluded
         result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=float("nan"))
         # 2 bullish layers (price>ema21, ema21>sma50), SMA200 layer skipped → MOSTLY_BULLISH
@@ -263,7 +276,6 @@ class TestMAAlignment:
         assert result["sma50_above_sma200"] is False  # explicitly False when sma200 unknown
 
     def test_none_sma200(self):
-        from src.market.indicators import ma_alignment
         result = ma_alignment(price=150, ema_21=140, sma_50=130, sma_200=None)
         assert result["status"] == "MOSTLY_BULLISH"
 

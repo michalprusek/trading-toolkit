@@ -71,5 +71,5 @@ time.sleep(0.3)
 **Quality Standards:**
 - Never skip any [PORTFOLIO] position
 - Always estimate fees for both BUY and SELL
-- Flag earnings within 14 days prominently
+- Flag earnings within 14 days prominently: < 5 days = ALERT (block new positions), 5-14 days = WATCH (caution)
 - Compare P/E to sector median, not absolute

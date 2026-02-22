@@ -263,7 +263,7 @@ def analyze_instrument(symbol: str, extended: bool = False) -> dict:
             signals.append(f"RVOL {rvol_val:.1f}x low volume (weak conviction)")
 
     # Gap signals
-    if abs(gap_pct) >= 1.0:
+    if gap_pct is not None and abs(gap_pct) >= 1.0:
         direction = "up" if gap_pct > 0 else "down"
         signals.append(f"Gap {direction} {abs(gap_pct):.1f}%")
 
@@ -374,10 +374,25 @@ def _fetch_vix_external() -> float | None:
         )
         if resp.status_code == 200:
             data = resp.json()
-            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
-            price = meta.get("regularMarketPrice") or meta.get("previousClose")
-            if price and float(price) > 0:
-                return float(price)
+            result_list = data.get("chart", {}).get("result") or []
+            if not result_list:
+                _log.debug("VIX Yahoo Finance: status 200 but result list is null/empty")
+            else:
+                meta = result_list[0].get("meta", {})
+                price = meta.get("regularMarketPrice") or meta.get("previousClose")
+                try:
+                    if price and float(price) > 0:
+                        return float(price)
+                    _log.debug(
+                        "VIX Yahoo Finance: status 200 but no usable price "
+                        "(regularMarketPrice=%r, previousClose=%r)",
+                        meta.get("regularMarketPrice"), meta.get("previousClose"),
+                    )
+                except (ValueError, TypeError) as conv_err:
+                    _log.warning(
+                        "VIX Yahoo Finance: could not convert price to float (%r): %s",
+                        price, conv_err,
+                    )
     except Exception:
         _log.warning("VIX fetch from Yahoo Finance failed", exc_info=True)
 
@@ -392,8 +407,14 @@ def _fetch_vix_external() -> float | None:
             )
             if resp.status_code == 200:
                 price = resp.json().get("c")  # current price
-                if price and float(price) > 0:
-                    return float(price)
+                try:
+                    if price and float(price) > 0:
+                        return float(price)
+                except (ValueError, TypeError) as conv_err:
+                    _log.warning(
+                        "VIX Finnhub: could not convert price to float (%r): %s",
+                        price, conv_err,
+                    )
     except Exception:
         _log.warning("VIX fetch from Finnhub failed", exc_info=True)
 
@@ -480,6 +501,10 @@ def analyze_market_regime() -> dict[str, Any]:
     spy_present = "spy" in regime
     qqq_present = "qqq" in regime
     if not spy_present and not qqq_present:
+        _log.error(
+            "Market regime analysis failed: both SPY and QQQ unavailable. Errors: %s",
+            regime["errors"],
+        )
         regime["bias"] = "UNKNOWN"
         regime["bias_guidance"] = "Market data unavailable — cannot determine regime."
         return regime

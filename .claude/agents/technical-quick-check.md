@@ -30,7 +30,7 @@ print(json.dumps(regime, indent=2, default=str))
 Report the market regime result:
 - **SPY**: trend, RSI, above/below 20 SMA, above/below 50 SMA
 - **QQQ**: trend, RSI, above/below 20 SMA, above/below 50 SMA
-- **VIX**: value, regime (LOW/NORMAL/ELEVATED/HIGH/EXTREME), sizing guidance
+- **VIX**: value, regime (VERY_LOW/LOW/NORMAL/ELEVATED/HIGH/EXTREME), sizing guidance
 - **Overall Bias**: RISK_ON / CAUTIOUS / RISK_OFF
 
 **VIX-Based Position Sizing Guidance** (include in output header):
