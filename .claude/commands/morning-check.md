@@ -32,6 +32,71 @@ Parse the JSON output. Extract:
 
 Save the list of portfolio symbols for the agents below.
 
+### Reconcile External Closes (SL/TP/TSL/Manual)
+
+Before health checks, detect any positions closed since the last snapshot and record them:
+
+```python
+import sqlite3, json, os
+os.environ['TRADING_MODE'] = '{mode}'
+conn = sqlite3.connect('data/etoro.db')
+conn.row_factory = sqlite3.Row
+snap = conn.execute(
+    'SELECT positions_json FROM portfolio_snapshots ORDER BY timestamp DESC LIMIT 1'
+).fetchone()
+if not snap:
+    print('External close check: no snapshot found — skipping')
+    conn.close()
+else:
+    snapshot_by_id = {p['position_id']: p for p in json.loads(snap['positions_json']) if p.get('position_id')}
+    from src.portfolio.manager import get_portfolio as _gp
+    _live_ids = {p.position_id for p in _gp().positions}
+    _disappeared = set(snapshot_by_id.keys()) - _live_ids
+    if not _disappeared:
+        print('External close check: no new closes detected')
+        conn.close()
+    else:
+        _ph = ','.join('?' * len(_disappeared))
+        _already = {r[0] for r in conn.execute(
+            f'SELECT position_id FROM position_closes WHERE position_id IN ({_ph})',
+            list(_disappeared)).fetchall()}
+        _new = _disappeared - _already
+        if not _new:
+            print(f'External close check: {len(_disappeared)} close(s) already recorded')
+            conn.close()
+        else:
+            from src.market.data import get_rate as _gr
+            for _pid in _new:
+                _pos = snapshot_by_id[_pid]
+                _sym, _or = _pos['symbol'], _pos.get('open_rate') or 0
+                _sl, _tp = _pos.get('stop_loss_rate') or 0, _pos.get('take_profit_rate') or 0
+                _dir, _amt = _pos.get('direction', 'BUY'), _pos.get('amount') or 0
+                _lr = None
+                try:
+                    _ro = _gr(_pos.get('instrument_id'))
+                    _lr = _ro.mid if _ro else None
+                except Exception:
+                    pass
+                _lr = _lr or _pos.get('current_rate') or _or
+                _pnl = None
+                if _or and _lr:
+                    _u = _amt / _or
+                    _pnl = _u * (_lr - _or) if _dir == 'BUY' else _u * (_or - _lr)
+                _rsn = 'SL' if (_lr and _sl > 0 and abs(_lr - _sl)/_lr < 0.005) \
+                    else 'TP' if (_lr and _tp > 0 and abs(_lr - _tp)/_lr < 0.005) \
+                    else ('TSL_or_manual' if (_pnl and _pnl > 0) else 'manual')
+                conn.execute(
+                    'INSERT INTO position_closes (position_id, symbol, pnl, reason) VALUES (?, ?, ?, ?)',
+                    (_pid, _sym, round(_pnl, 2) if _pnl is not None else None, _rsn))
+                _pnl_s = f'${_pnl:.2f}' if _pnl is not None else 'N/A'
+                print(f'  External close: {_sym} (pos {_pid}) P&L={_pnl_s} reason={_rsn}')
+            conn.commit()
+            conn.close()
+            print(f'External close check: {len(_new)} new close(s) recorded')
+```
+
+Announce any detected closes prominently before the dashboard under **External Closes Detected** if count > 0.
+
 ### Portfolio Health Quick Checks
 
 Run immediately after parsing the portfolio JSON. This surfaces structural problems before agents are launched.
