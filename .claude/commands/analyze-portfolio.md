@@ -573,6 +573,36 @@ New entry format:
 - [2-3 most important insights from the analysis]
 ### Open Themes / Watch Items
 - [Items to monitor before next analysis — earnings dates, price levels, macro events]
+### Historical Performance
+Run this before writing this section:
+```python
+import sqlite3, os
+os.environ.setdefault('TRADING_MODE', 'real')
+conn = sqlite3.connect('data/etoro.db')
+conn.row_factory = sqlite3.Row
+closes = conn.execute(
+    "SELECT pnl, reason, symbol, timestamp FROM position_closes ORDER BY timestamp DESC"
+).fetchall()
+daily = conn.execute(
+    "SELECT date, realized_pnl FROM daily_pnl ORDER BY date DESC LIMIT 30"
+).fetchall()
+conn.close()
+profits = [c['pnl'] for c in closes if c['pnl'] is not None]
+wins = [p for p in profits if p > 0]
+losses = [p for p in profits if p <= 0]
+win_rate = len(wins) / len(profits) * 100 if profits else 0
+avg_win = sum(wins) / len(wins) if wins else 0
+avg_loss = sum(losses) / len(losses) if losses else 0
+total_30d = sum(d['realized_pnl'] for d in daily if d['realized_pnl'])
+print(f"All-time closed: {len(profits)} trades | Win rate: {win_rate:.0f}% | Avg win: ${avg_win:.2f} | Avg loss: ${avg_loss:.2f}")
+print(f"Realized P&L last 30d: ${total_30d:.2f}")
+for c in closes[:5]:
+    sign = '+' if c['pnl'] >= 0 else ''
+    print(f"  {c['symbol']}: {sign}${c['pnl']:.2f} [{c['timestamp'][:10]}] ({c['reason']})")
+```
+- All-time closed trades: N | Win rate: X% | Avg win: $X | Avg loss: $X
+- Realized P&L (last 30d): $X
+- Recent closes: [SYMBOL ±$X, ...]
 ### Portfolio State (After Trades)
 - Total: $X, Cash: $Y, Positions: N, Overall P&L: $Z (X%)
 - Exposure: X%

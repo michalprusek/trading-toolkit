@@ -22,7 +22,7 @@ fi
 # Block edits to .env and common variants (.env.local, .env.production, etc.)
 # Allow: .env.example, .env.sample, .env.template
 BASENAME=$(basename "$FILE_PATH")
-if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]] && [[ "$BASENAME" != ".env.example" ]] && [[ "$BASENAME" != ".env.sample" ]] && [[ "$BASENAME" != ".env.template" ]]; then
+if { [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]]; } && [[ "$BASENAME" != ".env.example" ]] && [[ "$BASENAME" != ".env.sample" ]] && [[ "$BASENAME" != ".env.template" ]]; then
     echo "BLOCKED: .env edits are protected to guard API keys and trading mode." >&2
     echo "Edit .env manually in your terminal." >&2
     exit 2

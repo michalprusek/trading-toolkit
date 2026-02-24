@@ -223,6 +223,43 @@ After ALL THREE subagents return, present a consolidated morning dashboard.
 | Positions | N |
 | VIX Sizing Adj | X.Xx |
 
+## Historical Performance (Last 30 Days)
+
+Before presenting this section, run this DB query:
+
+```python
+import sqlite3, os
+os.environ.setdefault('TRADING_MODE', 'real')
+conn = sqlite3.connect('data/etoro.db')
+conn.row_factory = sqlite3.Row
+closes = conn.execute(
+    "SELECT pnl, reason, symbol, timestamp FROM position_closes ORDER BY timestamp DESC"
+).fetchall()
+daily = conn.execute(
+    "SELECT date, realized_pnl FROM daily_pnl ORDER BY date DESC LIMIT 30"
+).fetchall()
+conn.close()
+profits = [c['pnl'] for c in closes if c['pnl'] is not None]
+wins = [p for p in profits if p > 0]
+losses = [p for p in profits if p <= 0]
+win_rate = len(wins) / len(profits) * 100 if profits else 0
+total_realized = sum(d['realized_pnl'] for d in daily if d['realized_pnl'])
+print(f"Closed trades total: {len(profits)} | Win rate: {win_rate:.0f}%")
+print(f"Total realized P&L (30d): ${total_realized:.2f}")
+for c in closes[:3]:
+    sign = '+' if c['pnl'] >= 0 else ''
+    print(f"  {c['symbol']}: {sign}${c['pnl']:.2f} [{c['timestamp'][:10]}] ({c['reason']})")
+```
+
+Format output:
+
+| Metric | Value |
+|--------|-------|
+| Closed Trades | N |
+| Win Rate | X% |
+| Realized P&L (30d) | $X |
+| Last Close | SYMBOL ±$X |
+
 ## Position Status
 
 **Consolidate same-symbol positions into one row** (e.g., NVDA×2 = combined invested + blended P&L%, single technical analysis). Use `×N` notation.

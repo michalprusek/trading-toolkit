@@ -31,11 +31,12 @@ Run this Python snippet (replace SYMBOL with the actual symbol):
     symbol = 'NVDA'  # <-- replace with actual ticker, e.g. 'AAPL', 'BTC', 'MSFT'
     conn = sqlite3.connect('data/etoro.db')
     conn.row_factory = sqlite3.Row
+    # Schema: id, timestamp, position_id, symbol, pnl, reason
     closes = conn.execute("""
-        SELECT symbol, net_profit, close_reason, closed_at, position_id
+        SELECT symbol, pnl, reason, timestamp, position_id
         FROM position_closes
         WHERE symbol = ?
-        ORDER BY closed_at DESC
+        ORDER BY timestamp DESC
         LIMIT 3
     """, (symbol,)).fetchall()
     for c in closes:
@@ -44,12 +45,14 @@ Run this Python snippet (replace SYMBOL with the actual symbol):
 
 ### Step 3 — Classify the outcome
 
+Use the `pnl` and `reason` fields from position_closes:
+
 | Outcome | Criteria |
 |---------|----------|
-| Target hit | net_profit > 0, close_reason = "TP" or "manual" |
-| SL hit | net_profit < 0, close_reason = "SL" or "TSL" |
-| Manual close (profit) | net_profit > 0, user-initiated |
-| Manual close (loss) | net_profit < 0, user-initiated |
+| Target hit | pnl > 0, reason = "TP" or "manual" |
+| SL hit | pnl < 0, reason = "SL" or "TSL" |
+| Manual close (profit) | pnl > 0, user-initiated |
+| Manual close (loss) | pnl < 0, user-initiated |
 | Time exit | Held >30 days, fee drag |
 
 ### Step 4 — Save lesson to memories
