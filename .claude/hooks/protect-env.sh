@@ -8,7 +8,8 @@ FILE_PATH=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    print(data.get('file_path', ''))
+    tool_input = data.get('tool_input', {})
+    print(tool_input.get('file_path', ''))
 except Exception:
     print('')
 " 2>/dev/null)
@@ -18,8 +19,10 @@ if [[ -z "$FILE_PATH" ]]; then
     exit 0
 fi
 
-# Block edits to .env (but not .env.example or .env.sample)
-if [[ "$FILE_PATH" == *".env" ]] || [[ "$FILE_PATH" == *"/.env" ]]; then
+# Block edits to .env and common variants (.env.local, .env.production, etc.)
+# Allow: .env.example, .env.sample, .env.template
+BASENAME=$(basename "$FILE_PATH")
+if [[ "$BASENAME" == ".env" ]] || [[ "$BASENAME" == .env.* ]] && [[ "$BASENAME" != ".env.example" ]] && [[ "$BASENAME" != ".env.sample" ]] && [[ "$BASENAME" != ".env.template" ]]; then
     echo "BLOCKED: .env edits are protected to guard API keys and trading mode." >&2
     echo "Edit .env manually in your terminal." >&2
     exit 2

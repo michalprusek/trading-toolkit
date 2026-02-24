@@ -10,7 +10,8 @@ FILE_PATH=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    print(data.get('file_path', ''))
+    tool_input = data.get('tool_input', {})
+    print(tool_input.get('file_path', ''))
 except Exception:
     print('')
 " 2>/dev/null)

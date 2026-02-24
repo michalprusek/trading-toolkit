@@ -28,6 +28,7 @@ Look for recent entries matching the symbol.
 Run this Python snippet (replace SYMBOL with the actual symbol):
 
     import sqlite3
+    symbol = 'NVDA'  # <-- replace with actual ticker, e.g. 'AAPL', 'BTC', 'MSFT'
     conn = sqlite3.connect('data/etoro.db')
     conn.row_factory = sqlite3.Row
     closes = conn.execute("""
@@ -36,7 +37,7 @@ Run this Python snippet (replace SYMBOL with the actual symbol):
         WHERE symbol = ?
         ORDER BY closed_at DESC
         LIMIT 3
-    """, ('SYMBOL',)).fetchall()
+    """, (symbol,)).fetchall()
     for c in closes:
         print(dict(c))
     conn.close()
