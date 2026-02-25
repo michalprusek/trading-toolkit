@@ -97,6 +97,45 @@ else:
 
 Announce any detected closes prominently before the dashboard under **External Closes Detected** if count > 0.
 
+### Fundamental Flash Data (per-holding loop)
+
+Quick fundamental scan for analyst price targets and 52-week positioning:
+
+```python
+import os, json, time
+os.environ['TRADING_MODE'] = '{mode}'
+from src.market.fundamentals import get_instrument_fundamentals
+
+fund_flash = {}   # symbol -> {'pt_upside': float, 'consensus': str, 'days_till_earnings': int, 'w52_pct': float}
+for sym in list(dict.fromkeys(p['symbol'] for p in positions)):  # deduplicated, order preserved
+    try:
+        f = get_instrument_fundamentals(sym)
+        ar = f.get('analyst_ratings', {})
+        ea = f.get('earnings', {})
+        pp = f.get('price_performance', {})
+        price = next((p.get('current_rate') or p.get('open_rate', 0) for p in positions if p['symbol'] == sym), 0)
+        hi, lo = pp.get('high_52w'), pp.get('low_52w')
+        w52_pct = round((price - lo) / (hi - lo) * 100, 0) if hi and lo and hi != lo else None
+        fund_flash[sym] = {
+            'pt_upside': ar.get('target_upside'),     # e.g. 14.5 = analyst PT is 14.5% above current price
+            'consensus': ar.get('consensus', ''),      # "BUY" / "HOLD" / "SELL"
+            'days_till_earnings': ea.get('days_till_earnings'),
+            'w52_pct': w52_pct,                        # 100% = at 52w high, 0% = at 52w low
+        }
+        time.sleep(0.2)
+    except Exception:
+        fund_flash[sym] = {}
+
+print(json.dumps(fund_flash, indent=2, default=str))
+```
+
+Save `fund_flash` dict — used in Phase 2 Position Status table for PT Upside and 52w% columns.
+
+**Immediately flag:**
+- `pt_upside < 0`: ⚠️ analyst PT BELOW current price — analysts expect decline
+- `w52_pct > 95`: ⚠️ near 52-WEEK HIGH — momentum extended
+- `consensus == 'SELL'`: ⚠️ analyst consensus is SELL
+
 ### Portfolio Health Quick Checks
 
 Run immediately after parsing the portfolio JSON. This surfaces structural problems before agents are launched.
@@ -221,11 +260,72 @@ regime = analyze_market_regime()
 print(json.dumps(regime, indent=2, default=str))
 ```
 
+**Macro Context (10Y yield + DXY via Yahoo Finance):**
+
+```python
+import httpx, json
+_mc = httpx.Client(timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+def _yf_last2(ticker):
+    try:
+        r = _mc.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                    params={"interval": "1d", "range": "5d"})
+        if r.status_code == 200:
+            closes = r.json().get("chart", {}).get("result", [{}])[0].get(
+                "indicators", {}).get("quote", [{}])[0].get("close", [])
+            valid = [c for c in closes if c is not None]
+            if len(valid) >= 2:
+                return {"current": round(valid[-1], 3), "change": round(valid[-1] - valid[-2], 3),
+                        "direction": "RISING" if valid[-1] > valid[-2] else "FALLING"}
+    except Exception:
+        pass
+    return None
+
+tnx = _yf_last2("%5ETNX")   # 10-Year Treasury yield
+dxy = _yf_last2("DX-Y.NYB") # US Dollar Index
+print(json.dumps({"10y_yield": tnx, "dxy": dxy}, indent=2))
+```
+
+**Sector Rotation Quick Scan (11 ETFs vs SPY):**
+
+```python
+import os, json, time
+os.environ['TRADING_MODE'] = '{mode}'
+from src.market.data import analyze_instrument
+
+SECTOR_MAP = {
+    'XLK':'Technology','XLF':'Financials','XLV':'Healthcare','XLE':'Energy',
+    'XLI':'Industrials','XLC':'Communication','XLY':'ConsDiscr',
+    'XLP':'ConsStaples','XLB':'Materials','XLU':'Utilities','XLRE':'RealEstate'
+}
+spy_result = analyze_instrument('SPY')
+spy_gap = spy_result.get('gap_pct') or 0.0
+
+sector_rs = {}
+for etf, name in SECTOR_MAP.items():
+    try:
+        r = analyze_instrument(etf)
+        if 'error' not in r:
+            gap = r.get('gap_pct') or 0.0
+            sector_rs[etf] = {'name': name, 'gap': round(gap, 2),
+                              'vs_spy': round(gap - spy_gap, 2), 'trend': r.get('trend')}
+        time.sleep(0.2)
+    except Exception:
+        pass
+
+ranked = sorted(sector_rs.items(), key=lambda x: x[1].get('vs_spy', -99), reverse=True)
+for etf, d in ranked:
+    sig = '🟢 IN ROTATION' if d['vs_spy'] > 0.3 else ('🔴 LAGGING' if d['vs_spy'] < -0.3 else '⬜ NEUTRAL')
+    print(f"{sig} {d['name']} ({etf}): gap {d['gap']:+.1f}% | vs SPY {d['vs_spy']:+.1f}%")
+```
+
 Parse and save:
 - **SPY**: trend, RSI, above/below 20 SMA, above/below 50 SMA, MA alignment
 - **QQQ**: trend, RSI, above/below 20 SMA, above/below 50 SMA
 - **VIX**: value, regime (VERY_LOW/LOW/NORMAL/ELEVATED/HIGH/EXTREME), sizing_adjustment
 - **Overall Bias**: RISK_ON / CAUTIOUS / RISK_OFF
+- **10Y Yield**: current value and direction (RISING/FALLING)
+- **DXY**: current value and direction (RISING/FALLING)
+- **Sector RS**: ranked list of all 11 sector ETFs by gap% vs SPY
 
 **Pass VIX regime + sizing adjustment to ALL agents** in their prompts.
 
@@ -274,8 +374,15 @@ After ALL THREE subagents return, present a consolidated morning dashboard.
 - **SPY**: [trend] | RSI [value] | [above/below] 20 SMA | [above/below] 50 SMA | MA: [alignment]
 - **QQQ**: [trend] | RSI [value] | [above/below] 20 SMA | [above/below] 50 SMA
 - **VIX**: [value] | [regime] — [sizing guidance, e.g., "Standard sizing" or "Reduce by 25%"]
+- **10Y Yield**: [value]% [[RISING/FALLING]] — [headwind for growth if >4.5% and rising | neutral]
+- **DXY**: [value] [[RISING/FALLING]] — [dollar strength if >105 rising — headwind for crypto/commodities | neutral]
 - **Today's Calendar**: [key events with impact tags: 🔴 RED FLAG / 🟡 YELLOW, or "No major events"]
 - **Market Mood**: [1-line summary from News Agent]
+
+## Sector Rotation (1-day RS vs SPY)
+| # | Sector | ETF | Gap% | vs SPY | Status |
+|---|--------|-----|------|--------|--------|
+(from Phase 0.5 sector scan; sorted best→worst; 🟢 IN ROTATION / ⬜ NEUTRAL / 🔴 LAGGING)
 
 ## Portfolio Overview
 | Metric | Value |
@@ -329,11 +436,14 @@ Format output:
 
 **Consolidate same-symbol positions into one row** (e.g., NVDA×2 = combined invested + blended P&L%, single technical analysis). Use `×N` notation.
 
-| # | Symbol | P&L | P&L% | Trend | MA Align | RSI | RVOL | Chandelier | Chan.✓? | Portfolio SL | SL Type | Earnings | News | Status |
-|---|--------|-----|------|-------|----------|-----|------|-----------|--------|--------------|---------|----------|------|--------|
+| # | Symbol | P&L | P&L% | Trend | MA Align | RSI | RVOL | Gap% | PT Upside | 52w% | Chandelier | Chan.✓? | SL Type | Earnings | Status |
+|---|--------|-----|------|-------|----------|-----|------|------|-----------|------|-----------|--------|---------|----------|--------|
 
 `Chan.✓?` = ✅ chandelier < price (bullish ST, TSL valid) | ❌ chandelier > price (bearish ST, Fixed SL only)
 `SL Type` = TSL if ✅ | Fixed if ❌ | flag `⚠️ Legacy TP` if TP is set >50% above current price
+`Gap%` = pre-market/intraday gap from `result["gap_pct"]`. Flag ≥ ±1%.
+`PT Upside` = analyst consensus price target upside from `fund_flash[sym]["pt_upside"]`. ⚠️ if negative (analysts expect decline).
+`52w%` = position in 52-week range from `fund_flash[sym]["w52_pct"]`. ⚠️ if > 95% (extended). 🟢 if < 15% (potential value zone).
 (sort: ALERTs first, then WATCHes, then HOLDs)
 
 ## Alerts & Watch Items
@@ -390,6 +500,26 @@ Based on the dashboard results, evaluate whether any position changes are warran
 - Market bias is RISK_OFF (VIX > 25, broad market bearish)
 - Market conditions are too uncertain (VIX spike, pre-FOMC, RED FLAG macro day)
 - Daily loss approaching circuit breaker
+
+### Partial Profit-Taking Signals (eToro has no partial close — flag for user awareness only)
+
+- If `fund_flash[sym]["pt_upside"] < 5` AND position P&L > 0: flag "⚠️ NEAR ANALYST PT — price approaching analyst target, thesis complete"
+- If `fund_flash[sym]["w52_pct"] > 95` AND RSI > 70: flag "⚠️ EXTENDED at 52w high with overbought RSI — momentum likely pausing"
+- Suggest full close only when fundamentally justified — not purely technical extension
+
+**Analyst PT as secondary TP for BUY suggestions:**
+When presenting watchlist BUY recommendations, always add:
+- TP2 = analyst consensus PT (from fund_flash or watchlist screener agent output)
+- Add note: "Analyst consensus: [BUY/HOLD/SELL] | PT: +X% upside"
+
+**Also include the Sector Rotation mini-table in Phase 2 Market Regime section:**
+```
+## Sector Rotation (1-day RS vs SPY)
+| # | Sector | ETF | Gap% | vs SPY | Status |
+|---|--------|-----|------|--------|--------|
+(sorted best→worst; 🟢 IN ROTATION if vs_spy > +0.3%, 🔴 LAGGING if < −0.3%, ⬜ NEUTRAL otherwise)
+```
+**Only recommend BUY candidates from IN ROTATION sectors** (unless setup is extremely compelling for a NEUTRAL sector).
 
 ### Always include SL Adjustment Recommendations
 
