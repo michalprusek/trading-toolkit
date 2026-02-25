@@ -59,7 +59,25 @@ if weekly is not None and not weekly.empty:
 time.sleep(0.3)
 ```
 
-3. **SPY Benchmark**: Analyze SPY first. Then for each symbol, note whether it's outperforming or underperforming SPY on a relative basis (compare price % change over 20 days vs SPY's 20-day change).
+3. **RS vs SPY — quantified 20-day relative return (run SPY candles ONCE, reuse per symbol):**
+
+```python
+# Run once before the symbol loop
+spy_iid_d = resolve_symbol('SPY')
+spy_iid = spy_iid_d['instrument_id'] if isinstance(spy_iid_d, dict) else spy_iid_d
+spy_c = get_candles(spy_iid, 'OneDay', 25)
+spy_20d = (spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100 if spy_c is not None and len(spy_c)>=21 else 0.0
+
+# Per symbol (daily candles already fetched above for S/R + weekly trend):
+sym_iid_d = resolve_symbol("SYMBOL")
+sym_iid = sym_iid_d['instrument_id'] if isinstance(sym_iid_d, dict) else sym_iid_d
+sym_c = get_candles(sym_iid, 'OneDay', 25)
+sym_20d = (sym_c['close'].iloc[-1]/sym_c['close'].iloc[-21]-1)*100 if sym_c is not None and len(sym_c)>=21 else 0.0
+rs_vs_spy = round(sym_20d - spy_20d, 2)
+rs_label = "OUTPERFORMING" if rs_vs_spy > 1 else "LAGGING" if rs_vs_spy < -1 else "INLINE"
+```
+
+Report: `RS vs SPY (20d): SYM {sym_20d:+.1f}% vs SPY {spy_20d:+.1f}% = {rs_vs_spy:+.1f}% ({rs_label})`
 
 4. **Sector Relative Strength**: For the symbol's sector, check the sector ETF (XLK for tech, XLF for financials, XLV for healthcare, XLE for energy, XLI for industrials, XLP for staples, XLY for consumer, XLU for utilities, XLB for materials, XLC for comms, XLRE for real estate). Is the sector ETF outperforming or underperforming SPY over the last 5-10 days? Sector in rotation = money flowing in.
 
@@ -74,7 +92,7 @@ time.sleep(0.3)
    - **Entry Zone**: ideally near support or after pullback to EMA 21. Specify a range (e.g., $41.80 – $42.20)
    - **Hard SL**: nearest support minus 1.5× ATR (or Chandelier long_stop, whichever is tighter). This ensures normal daily noise doesn't trigger the stop.
    - **TP1**: nearest resistance level
-   - **TP2**: analyst price target or next Fibonacci resistance
+   - **TP2**: Use `result["fibonacci"]` from extended analysis — target the 0% level (recent swing high) or the next Fibonacci extension above price. Check `result["fibonacci"]["0.0%"]` (swing high) as primary TP2. If swing high provides < 1:2 R:R, report TP2 as "no valid level — extend to next resistance." Also report which Fibonacci level price is currently nearest to (within 1.5%): bouncing off `result["fibonacci"]["38.2%"]` or `result["fibonacci"]["50.0%"]` = healthy pullback entry; at `result["fibonacci"]["61.8%"]` = high-probability reversal zone.
    - **R:R Ratio**: (Entry to TP1) / (Entry to SL). Must be >= 1:2 to be a valid BUY candidate. **REJECT the setup if R:R < 1:2.**
 
 **Output Format — For EACH symbol return ALL fields:**

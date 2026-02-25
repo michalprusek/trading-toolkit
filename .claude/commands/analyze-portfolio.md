@@ -60,6 +60,95 @@ Sizing adjustment: [1.0x / 0.75x / 0.5x / 0.25x]
 
 **Pass VIX data to ALL agents** in their prompts. VIX sizing_adjustment will be applied to all BUY amounts in Phase 4.
 
+### Step 1.0b: Sector Rotation Ranking + Extended Macro
+
+**Extended macro context (10Y yield + DXY + credit signal):**
+
+```python
+import httpx, json
+_mc = httpx.Client(timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+def _yf_series(ticker, days=5):
+    try:
+        r = _mc.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                    params={"interval": "1d", "range": f"{days}d"})
+        if r.status_code == 200:
+            res = r.json().get("chart", {}).get("result") or []
+            if res:
+                closes = res[0].get("indicators",{}).get("quote",[{}])[0].get("close",[])
+                return [c for c in closes if c is not None]
+    except Exception:
+        pass
+    return []
+
+tnx = _yf_series("%5ETNX"); dxy = _yf_series("DX-Y.NYB")
+hyg = _yf_series("HYG"); tlt = _yf_series("TLT")
+
+macro_context = {}
+if tnx: macro_context['10y_yield'] = {'current': round(tnx[-1],3), 'direction': 'RISING' if len(tnx)>1 and tnx[-1]>tnx[-2] else 'FALLING'}
+if dxy: macro_context['dxy'] = {'current': round(dxy[-1],2), 'direction': 'RISING' if len(dxy)>1 and dxy[-1]>dxy[-2] else 'FALLING'}
+if hyg: macro_context['credit_signal'] = 'RISK_OFF' if len(hyg)>1 and hyg[-1]<hyg[-2] else 'RISK_ON'
+if tlt: macro_context['tlt_direction'] = 'RISING' if len(tlt)>1 and tlt[-1]>tlt[-2] else 'FALLING'
+print(json.dumps(macro_context, indent=2))
+```
+
+**Sector rotation ranking (11 ETFs vs SPY, 5D and 20D):**
+
+```python
+import os, json, time
+os.environ['TRADING_MODE'] = '{mode}'
+from src.market.data import analyze_instrument, get_candles, resolve_symbol
+
+SECTOR_ETFS = {
+    'XLK':'Technology','XLF':'Financials','XLV':'Healthcare','XLE':'Energy',
+    'XLI':'Industrials','XLC':'Communication','XLY':'ConsDiscr',
+    'XLP':'ConsStaples','XLB':'Materials','XLU':'Utilities','XLRE':'RealEstate'
+}
+
+spy_iid = resolve_symbol('SPY'); spy_iid = spy_iid['instrument_id'] if isinstance(spy_iid, dict) else spy_iid
+spy_c = get_candles(spy_iid, 'OneDay', 25)
+spy_20d = round((spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100,2) if spy_c is not None and len(spy_c)>=21 else 0.0
+spy_5d  = round((spy_c['close'].iloc[-1]/spy_c['close'].iloc[-6]-1)*100,2)  if spy_c is not None and len(spy_c)>=6  else 0.0
+
+sector_rotation_rankings = {}
+for etf, name in SECTOR_ETFS.items():
+    try:
+        r = analyze_instrument(etf, extended=True); time.sleep(0.3)
+        if 'error' in r: continue
+        iid = resolve_symbol(etf); iid = iid['instrument_id'] if isinstance(iid, dict) else iid
+        c = get_candles(iid, 'OneDay', 25); time.sleep(0.2)
+        ret5  = round((c['close'].iloc[-1]/c['close'].iloc[-6]-1)*100, 2) if c is not None and len(c)>=6  else None
+        ret20 = round((c['close'].iloc[-1]/c['close'].iloc[-21]-1)*100,2) if c is not None and len(c)>=21 else None
+        sector_rotation_rankings[etf] = {
+            'name': name, 'ret_5d': ret5, 'ret_20d': ret20,
+            'vs_spy_5d': round(ret5 - spy_5d, 2) if ret5 is not None else None,
+            'vs_spy_20d': round(ret20 - spy_20d, 2) if ret20 is not None else None,
+            'trend': r.get('trend'), 'ma_align': r.get('ma_alignment',{}).get('status'),
+        }
+    except Exception as e:
+        sector_rotation_rankings[etf] = {'name': name, 'error': str(e)}
+
+ranked = sorted(sector_rotation_rankings.items(), key=lambda x: x[1].get('vs_spy_5d') or -99, reverse=True)
+print(json.dumps(ranked, indent=2, default=str))
+```
+
+Save `sector_rotation_rankings`, `macro_context`, `spy_20d`, and `spy_5d` — pass all to Phase 2 agents and to the sector-rotation agent. `spy_20d` is needed again in Phase 3 benchmark comparison.
+
+Print sector rotation table:
+```
+## Sector Rotation Ranking
+| # | Sector | ETF | 5D Return | 20D Return | vs SPY 5D | vs SPY 20D | Trend | MA | Status |
+(IN ROTATION: vs_spy_5d > +1%; LAGGING: vs_spy_5d < −1%; NEUTRAL: ±1%)
+TOP IN ROTATION: [top 3]   LAGGING: [bottom 3]
+```
+
+**Macro summary:**
+```
+📊 Macro: 10Y [{value}% {direction}] | DXY [{value} {direction}] | Credit [{RISK_ON/RISK_OFF}] | TLT [{direction}]
+10Y impact: [rising+>4.5% → headwind for growth, favor XLF | else neutral]
+DXY impact: [rising+>105 → favor domestic/XLP/XLY, headwind for commodities | else neutral]
+Credit impact: [RISK_OFF → reduce size, favor defensives | else normal]
+```
+
 ### Step 1.1: Get Current Portfolio
 
 Run this command to get the current portfolio state:
@@ -251,9 +340,9 @@ This combined list (portfolio positions + top new candidates, typically ~30-45 s
 
 ---
 
-## Phase 2: Deep Research (4 Parallel Agents)
+## Phase 2: Deep Research (5 Parallel Agents)
 
-Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool calls. Each agent gets the **filtered candidate list** from Phase 1.5 (NOT the full universe). Also embed the portfolio positions from Phase 1.
+Spawn ALL FIVE agents simultaneously in a SINGLE message with multiple Task tool calls. Each agent gets the **filtered candidate list** from Phase 1.5 (NOT the full universe). Also embed the portfolio positions from Phase 1.
 
 **CRITICAL**: Every agent MUST analyze ALL current portfolio positions. Portfolio positions are mandatory — they need HOLD/SELL verdicts regardless of their screening score. When passing symbols to agents, clearly mark portfolio positions with [PORTFOLIO] tag so agents prioritize them.
 
@@ -298,6 +387,18 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 > **Portfolio totals**: {paste total value, invested, cash, overall P&L from Phase 1}
 > **Filtered candidates for potential ADD**: {paste candidate symbols}
 
+### Agent 5: Sector Rotation Agent
+- `subagent_type: "sector-rotation"`
+- `model: "sonnet"`
+- `description: "Sector rotation analysis"`
+- Prompt (dynamic data only — agent has full SYMBOL_SECTOR_MAP built-in):
+
+> **Trading mode**: {mode}
+> **sector_rotation_rankings**: {paste full sector_rotation_rankings dict from Step 1.0b — do NOT re-fetch}
+> **macro_context**: {paste macro_context dict from Step 1.0b}
+> **Portfolio positions with amounts**: {paste list of {symbol, amount, pnl} dicts}
+> **Top candidate symbols from Phase 1.5 screening**: {paste top 25-30 candidate symbols with their CSS scores}
+
 ---
 
 ## Phase 3: Synthesis + Trade Plan
@@ -306,7 +407,7 @@ After ALL Phase 2 agents return, synthesize their results.
 
 ### Step 3.1: Portfolio Health Summary
 
-Combine insights from all 4 agents + history:
+Combine insights from all 5 agents + history:
 - Overall allocation assessment
 - Risk exposure analysis (from Risk Agent)
 - Market environment context (from News Agent)
@@ -314,6 +415,59 @@ Combine insights from all 4 agents + history:
 - Diversification score and correlation risk
 - Fee drag assessment (total overnight/CFD fees across portfolio)
 - Circuit breaker headroom
+
+**Benchmark Comparison vs SPY:**
+```python
+import sqlite3
+# spy_20d was computed and saved in Step 1.0b — use that value here
+# spy_20d = 20-day SPY return (already computed: (spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100)
+conn = sqlite3.connect('data/etoro.db')
+snaps = conn.execute(
+    "SELECT total_value, timestamp FROM portfolio_snapshots ORDER BY timestamp ASC"
+).fetchall()
+conn.close()
+if len(snaps) >= 2:
+    pf_return = round((snaps[-1][0] / snaps[0][0] - 1) * 100, 1)
+    # spy_20d: use the value saved from Step 1.0b output (not re-fetched here)
+    print(f"Portfolio return since first snapshot: {pf_return:+.1f}%  |  SPY 20d: {spy_20d:+.1f}%  |  Alpha: {pf_return-spy_20d:+.1f}%")
+```
+Report: "Portfolio return: +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%" (use `spy_20d` from Step 1.0b saved output)
+
+**Position Aging (from trade_log):**
+```python
+import sqlite3
+from datetime import datetime
+conn = sqlite3.connect('data/etoro.db')
+rows = conn.execute(
+    "SELECT symbol, direction, timestamp FROM trade_log WHERE status='executed' ORDER BY timestamp ASC"
+).fetchall()
+conn.close()
+aging = {}
+now = datetime.utcnow()
+for sym, direction, ts in rows:
+    if direction == 'BUY' and sym not in aging:
+        try:
+            opened = datetime.fromisoformat(ts.replace('Z',''))
+            aging[sym] = {'days_held': (now - opened).days, 'since': ts[:10]}
+        except Exception:
+            pass
+print(aging)
+```
+Add "Days Held" and "Since" columns to HOLD table. Flag:
+- > 60 days with negative P&L: "🔴 UNDERPERFORMER — evaluate exit thesis"
+- > 30 days with no thesis change noted in history: "⚠️ STALE — review rationale"
+
+**Macro context from Step 1.0b:**
+Include in portfolio health summary:
+```
+📊 Macro: 10Y [{value}% {direction}] | DXY [{value} {direction}] | Credit [{RISK_ON/RISK_OFF}] | TLT [{direction}]
+```
+
+**Sector-based conviction adjustment (from Agent 5):**
+When setting BUY conviction level, apply sector_score from sector-rotation agent:
+- sector_score +2: upgrade conviction one level (weak→moderate, moderate→strong)
+- sector_score −2: downgrade conviction one level
+- sector_score 0/+1: no change
 
 ### Step 3.2: Position-by-Position Analysis Cards
 
@@ -573,9 +727,45 @@ New entry format:
 - [2-3 most important insights from the analysis]
 ### Open Themes / Watch Items
 - [Items to monitor before next analysis — earnings dates, price levels, macro events]
+### Historical Performance
+Run this before writing this section:
+```python
+import sqlite3, os
+os.environ.setdefault('TRADING_MODE', 'real')
+conn = sqlite3.connect('data/etoro.db')
+conn.row_factory = sqlite3.Row
+closes = conn.execute(
+    "SELECT pnl, reason, symbol, timestamp FROM position_closes ORDER BY timestamp DESC"
+).fetchall()
+daily = conn.execute(
+    "SELECT date, realized_pnl FROM daily_pnl ORDER BY date DESC LIMIT 30"
+).fetchall()
+conn.close()
+profits = [c['pnl'] for c in closes if c['pnl'] is not None]
+wins = [p for p in profits if p > 0]
+losses = [p for p in profits if p <= 0]
+win_rate = len(wins) / len(profits) * 100 if profits else 0
+avg_win = sum(wins) / len(wins) if wins else 0
+avg_loss = sum(losses) / len(losses) if losses else 0
+total_30d = sum(d['realized_pnl'] for d in daily if d['realized_pnl'])
+print(f"All-time closed: {len(profits)} trades | Win rate: {win_rate:.0f}% | Avg win: ${avg_win:.2f} | Avg loss: ${avg_loss:.2f}")
+print(f"Realized P&L last 30d: ${total_30d:.2f}")
+for c in closes[:5]:
+    sign = '+' if c['pnl'] >= 0 else ''
+    print(f"  {c['symbol']}: {sign}${c['pnl']:.2f} [{c['timestamp'][:10]}] ({c['reason']})")
+```
+- All-time closed trades: N | Win rate: X% | Avg win: $X | Avg loss: $X
+- Realized P&L (last 30d): $X
+- Recent closes: [SYMBOL ±$X, ...]
 ### Portfolio State (After Trades)
 - Total: $X, Cash: $Y, Positions: N, Overall P&L: $Z (X%)
 - Exposure: X%
+### Performance Attribution
+- Portfolio return (all snapshots): +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%
+- Best closed trade: SYMBOL +$X (reason: SL/TP/manual)
+- Worst closed trade: SYMBOL −$X
+- Sector exposure at time of analysis: [Tech X%, Financials Y%, Healthcare Z%, ...]
+- Top 3 IN ROTATION sectors this week: [list]
 ```
 
 Increment the analysis number based on how many entries already exist. Use today's date.

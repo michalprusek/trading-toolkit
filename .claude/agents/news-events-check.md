@@ -44,7 +44,24 @@ for symbol in PORTFOLIO_SYMBOLS:
 4. **Insider trading** (1 search per holding, max 5): "{SYMBOL} insider trading SEC form 4 {current month} {current year}" — prioritize ALERT/WATCH holdings first, then top 3 positions by invested amount. Flag if executives (CEO, CFO, directors) bought shares in last 14 days (bullish signal) or sold large blocks (bearish).
 5. **Short interest** (1 search per holding, max 5): "{SYMBOL} short interest float" — prioritize ALERT holdings first, then top 3 positions by invested amount. Flag if short interest > 15% of float (potential short squeeze on positive news, but also high bearish conviction).
 
-6. **Earnings date verification** — for any holding where the next earnings is estimated to be within 30 days (or where the API did not return a clear date), run:
+6. **IV Rank + Put/Call Ratio** (ALERT-status holdings only, max 5 symbols — skip WATCH/HOLD):
+
+   Run two WebSearches per ALERT symbol:
+   - `"{SYMBOL} IV rank implied volatility percentile {current month} {current year}"`
+   - `"{SYMBOL} put call ratio options {current month} {current year}"`
+
+   Interpret:
+   - **IV Rank > 80**: options premium very expensive — expect volatility collapse after the catalyst (sell premium bias, be careful buying directional options)
+   - **IV Rank 50-80**: elevated — institutional hedging active, news event expected
+   - **IV Rank < 20**: cheap options — good time for directional bets if thesis is clear
+   - **PCR > 1.2**: bearish institutional positioning (more puts than calls bought) — institutional downside hedge
+   - **PCR < 0.7**: bullish positioning (call buyers dominant) — institutional upside bet
+   - **PCR 0.7-1.2**: neutral
+
+   Add to per-holding table: `| IV Rank | PCR | Options Signal |`
+   Options Signal: "BEARISH HEDGE" (PCR>1.2) | "BULLISH BET" (PCR<0.7, IV Rank<30) | "IV SPIKE" (IV Rank>80) | "NEUTRAL"
+
+7. **Earnings date verification** — for any holding where the next earnings is estimated to be within 30 days (or where the API did not return a clear date), run:
    ```bash
    TRADING_MODE={mode} python3 cli.py market fundamentals SYMBOL
    ```

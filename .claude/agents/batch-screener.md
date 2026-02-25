@@ -67,6 +67,45 @@ time.sleep(0.5)  # rate limit protection
 - **MA Alignment penalty**: If `result["ma_alignment"]["status"]` == "MOSTLY_BEARISH": CSS -= 10 (MAs well-aligned bearish)
 - Clamp final CSS to [0, 100]
 
+**Fundamental Quality Bonus (apply AFTER all other adjustments, only for CSS ≥ 50 non-portfolio candidates):**
+
+```python
+from src.market.fundamentals import get_instrument_fundamentals
+import time
+
+def _fund_bonus(symbol: str) -> int:
+    try:
+        f = get_instrument_fundamentals(symbol)
+        ar = f.get('analyst_ratings', {})
+        ea = f.get('earnings', {})
+        consensus = (ar.get('consensus') or '').upper()
+        upside = ar.get('target_upside') or 0.0
+        days_till = ea.get('days_till_earnings')
+
+        bonus = 0
+        if consensus in ('BUY', 'STRONG_BUY', 'OUTPERFORM') and upside > 10:
+            bonus += 5    # analyst-backed setup
+        elif consensus in ('SELL', 'STRONG_SELL', 'UNDERPERFORM') or upside < -5:
+            bonus -= 5    # analyst sees downside
+        if days_till is not None and 0 < days_till < 5:
+            bonus -= 20   # hard earnings block — effectively removes from consideration
+        elif days_till is not None and 5 <= days_till < 14:
+            bonus -= 5    # earnings caution zone
+        time.sleep(0.2)
+        return bonus
+    except Exception:
+        return 0
+
+# Only call for non-portfolio candidates with CSS >= 50
+for candidate in [c for c in new_candidates if c['css'] >= 50]:
+    fb = _fund_bonus(candidate['symbol'])
+    candidate['css'] = max(0, min(100, candidate['css'] + fb))
+    candidate['fund_bonus'] = fb
+```
+
+Add `Fund Adj` column to Section B output: `+5`, `0`, `−5`, or `⚠️−20` (earnings block).
+This adds ~0.2s per qualifying candidate (~10s for 50 candidates above threshold).
+
 **Output Format — TWO sections:**
 
 **Section A — Portfolio positions** (MANDATORY — include ALL portfolio positions from this batch regardless of CSS score):
@@ -76,7 +115,7 @@ Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR | ATR% | Price | Key Signals 
 
 **Section B — Top 15 new candidates** (sorted by CSS descending, excluding portfolio positions already listed above):
 ```
-Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR | ATR% | Price | Key Signals (top 3)
+Symbol | CSS | Trend | MA Align | RSI | RVOL | ATR | ATR% | Price | Fund Adj | Key Signals (top 3)
 ```
 
 Also return a list of symbols that failed/were skipped with the reason.
