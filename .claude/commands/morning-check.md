@@ -113,7 +113,7 @@ for sym in list(dict.fromkeys(p['symbol'] for p in positions)):  # deduplicated,
         ar = f.get('analyst_ratings', {})
         ea = f.get('earnings', {})
         pp = f.get('price_performance', {})
-        price = next((p.get('current_rate') or p.get('open_rate', 0) for p in positions if p['symbol'] == sym), 0)
+        price = next((pos.get('current_rate') or pos.get('open_rate', 0) for pos in positions if pos['symbol'] == sym), 0)
         hi, lo = pp.get('high_52w'), pp.get('low_52w')
         w52_pct = round((price - lo) / (hi - lo) * 100, 0) if hi and lo and hi != lo else None
         fund_flash[sym] = {

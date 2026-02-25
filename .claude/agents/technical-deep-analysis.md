@@ -92,7 +92,7 @@ Report: `RS vs SPY (20d): SYM {sym_20d:+.1f}% vs SPY {spy_20d:+.1f}% = {rs_vs_sp
    - **Entry Zone**: ideally near support or after pullback to EMA 21. Specify a range (e.g., $41.80 – $42.20)
    - **Hard SL**: nearest support minus 1.5× ATR (or Chandelier long_stop, whichever is tighter). This ensures normal daily noise doesn't trigger the stop.
    - **TP1**: nearest resistance level
-   - **TP2**: Use `result["fibonacci"]` from extended analysis — target the 0% level (recent swing high) or the next Fibonacci extension above price. Check `result["fibonacci"]["0.0"]` (swing high) as primary TP2. If swing high provides < 1:2 R:R, report TP2 as "no valid level — extend to next resistance." Also report which Fibonacci level price is currently nearest to (within 1.5%): bouncing off 38.2% or 50% = healthy pullback entry; at 61.8% = high-probability reversal zone.
+   - **TP2**: Use `result["fibonacci"]` from extended analysis — target the 0% level (recent swing high) or the next Fibonacci extension above price. Check `result["fibonacci"]["0.0%"]` (swing high) as primary TP2. If swing high provides < 1:2 R:R, report TP2 as "no valid level — extend to next resistance." Also report which Fibonacci level price is currently nearest to (within 1.5%): bouncing off `result["fibonacci"]["38.2%"]` or `result["fibonacci"]["50.0%"]` = healthy pullback entry; at `result["fibonacci"]["61.8%"]` = high-probability reversal zone.
    - **R:R Ratio**: (Entry to TP1) / (Entry to SL). Must be >= 1:2 to be a valid BUY candidate. **REJECT the setup if R:R < 1:2.**
 
 **Output Format — For EACH symbol return ALL fields:**

@@ -133,7 +133,7 @@ print(f"\n| Scenario | Est. Portfolio Impact $ | Impact % | Highest-Beta Exposur
 print(f"|----------|------------------------|----------|-----------------------|")
 for label, spy_move in [('SPY -5%',-0.05),('SPY -10%',-0.10),('SPY -15%',-0.15),('SPY +5%',0.05)]:
     impact = sum(x['amount'] * x['beta'] * spy_move for x in pos_with_beta)
-    impact_pct = impact / total_value * 100 if total_value > 0 else 0
+    impact_pct = impact / total_inv * 100 if total_inv > 0 else 0
     worst = sorted(pos_with_beta, key=lambda x: x['amount']*x['beta']*spy_move)[:2]
     worst_str = ', '.join(f"{w['symbol']} (β={w['beta']:.1f})" for w in worst)
     print(f"| {label:<10} | ${impact:+.0f} | {impact_pct:+.1f}% | {worst_str} |")

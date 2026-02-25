@@ -131,7 +131,7 @@ ranked = sorted(sector_rotation_rankings.items(), key=lambda x: x[1].get('vs_spy
 print(json.dumps(ranked, indent=2, default=str))
 ```
 
-Save `sector_rotation_rankings` and `macro_context` — pass both to all Phase 2 agents and to the sector-rotation agent.
+Save `sector_rotation_rankings`, `macro_context`, `spy_20d`, and `spy_5d` — pass all to Phase 2 agents and to the sector-rotation agent. `spy_20d` is needed again in Phase 3 benchmark comparison.
 
 Print sector rotation table:
 ```
@@ -340,9 +340,9 @@ This combined list (portfolio positions + top new candidates, typically ~30-45 s
 
 ---
 
-## Phase 2: Deep Research (4 Parallel Agents)
+## Phase 2: Deep Research (5 Parallel Agents)
 
-Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool calls. Each agent gets the **filtered candidate list** from Phase 1.5 (NOT the full universe). Also embed the portfolio positions from Phase 1.
+Spawn ALL FIVE agents simultaneously in a SINGLE message with multiple Task tool calls. Each agent gets the **filtered candidate list** from Phase 1.5 (NOT the full universe). Also embed the portfolio positions from Phase 1.
 
 **CRITICAL**: Every agent MUST analyze ALL current portfolio positions. Portfolio positions are mandatory — they need HOLD/SELL verdicts regardless of their screening score. When passing symbols to agents, clearly mark portfolio positions with [PORTFOLIO] tag so agents prioritize them.
 
@@ -389,6 +389,7 @@ Spawn ALL FOUR agents simultaneously in a SINGLE message with multiple Task tool
 
 ### Agent 5: Sector Rotation Agent
 - `subagent_type: "sector-rotation"`
+- `model: "sonnet"`
 - `description: "Sector rotation analysis"`
 - Prompt (dynamic data only — agent has full SYMBOL_SECTOR_MAP built-in):
 
@@ -418,6 +419,8 @@ Combine insights from all 5 agents + history:
 **Benchmark Comparison vs SPY:**
 ```python
 import sqlite3
+# spy_20d was computed and saved in Step 1.0b — use that value here
+# spy_20d = 20-day SPY return (already computed: (spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100)
 conn = sqlite3.connect('data/etoro.db')
 snaps = conn.execute(
     "SELECT total_value, timestamp FROM portfolio_snapshots ORDER BY timestamp ASC"
@@ -425,9 +428,10 @@ snaps = conn.execute(
 conn.close()
 if len(snaps) >= 2:
     pf_return = round((snaps[-1][0] / snaps[0][0] - 1) * 100, 1)
+    # spy_20d: use the value saved from Step 1.0b output (not re-fetched here)
     print(f"Portfolio return since first snapshot: {pf_return:+.1f}%  |  SPY 20d: {spy_20d:+.1f}%  |  Alpha: {pf_return-spy_20d:+.1f}%")
 ```
-Report: "Portfolio return: +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%"
+Report: "Portfolio return: +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%" (use `spy_20d` from Step 1.0b saved output)
 
 **Position Aging (from trade_log):**
 ```python
