@@ -181,9 +181,11 @@ Spawn the **History Agent** using the Task tool:
 - `subagent_type: "general-purpose"`
 - `model: "sonnet"`
 - `description: "Load analysis history"`
-- Prompt: Read the file `/Users/michalprusek/.claude/projects/-Users-michalprusek-PycharmProjects-etoro/memory/portfolio_changelog.md` and provide a structured summary containing: (1) date of last analysis, (2) decisions made last time, (3) open watch items / themes still relevant, (4) any recurring patterns across analyses. If the changelog is empty or has no entries yet, say "No prior analysis found — this is the first run."
+- Prompt: Read the file `/Users/michalprusek/.claude/projects/-Users-michalprusek-PycharmProjects-etoro/memory/portfolio_changelog.md` and provide a structured summary containing: (1) date of last analysis, (2) decisions made last time, (3) open watch items / themes still relevant, (4) any recurring patterns across analyses, **(5) DISPOSITION TRACKER: for each portfolio symbol, extract its status (HOLD/WATCH/ALERT/SELL) from the last 3 analyses — return a dict like `{"BTC": ["ALERT","ALERT","ALERT"], "AAPL": ["HOLD","HOLD","HOLD"]}`**, (6) any "Pullback Watch" entries from the most recent analysis. If the changelog is empty or has no entries yet, say "No prior analysis found — this is the first run."
 
 Wait for the History Agent to return before proceeding.
+
+**Save the disposition tracker dict** — it will be used in Phase 3.2 for automatic SELL escalation.
 
 ### Step 1.3: Build Instrument Universe
 
@@ -288,6 +290,58 @@ GLD, SLV, USO, UNG
 BTC, ETH, SOL, ADA, XRP, DOGE, DOT, AVAX, LINK, UNI, NEAR
 ```
 
+### Step 1.4: Sector-Aware Universe Filtering
+
+After building the universe and before splitting into batches, apply sector-aware filtering to improve screening efficiency. Use `sector_rotation_rankings` from Step 1.0b:
+
+```python
+from src.market.sectors import SYMBOL_SECTOR_MAP, SECTOR_ETFS
+
+# Classify sectors by rotation status
+lagging_sectors = set()
+extended_sectors = set()
+for etf, data in sector_rotation_rankings.items():
+    if isinstance(data, dict) and not data.get('error'):
+        vs_5d = data.get('vs_spx_5d') or 0
+        ret_20d = data.get('ret_20d') or 0
+        if vs_5d < -1.0:
+            lagging_sectors.add(etf)
+        if ret_20d > 8.0 and vs_5d > 1.0:
+            extended_sectors.add(etf)
+
+# For LAGGING sectors: keep only top 3 most liquid symbols per sector
+# For EXTENDED sectors (>8% 20D return): mark for pullback-only entries
+LAGGING_TOP3 = {
+    'XLK': ['AAPL','MSFT','NVDA'], 'XLF': ['JPM','V','MA'], 'XLV': ['UNH','LLY','ABBV'],
+    'XLE': ['XOM','CVX','COP'], 'XLI': ['CAT','GE','HON'], 'XLC': ['GOOGL','META','NFLX'],
+    'XLY': ['AMZN','TSLA','HD'], 'XLP': ['PG','COST','WMT'], 'XLB': ['LIN','FCX','NEM'],
+    'XLU': ['NEE','DUK','SO'], 'XLRE': ['PLD','AMT','EQIX'],
+}
+
+original_size = len(universe)
+filtered_universe = []
+for sym in universe:
+    sector = SYMBOL_SECTOR_MAP.get(sym)
+    # Always keep portfolio positions
+    if sym in portfolio_symbols:
+        filtered_universe.append(sym)
+    # Always keep crypto, commodities, and symbols not in sector map
+    elif sector is None or sym in {'BTC','ETH','SOL','ADA','XRP','DOGE','DOT','AVAX','LINK','UNI','NEAR'}:
+        filtered_universe.append(sym)
+    # For LAGGING sectors: only top 3 liquid names
+    elif sector in lagging_sectors:
+        if sym in LAGGING_TOP3.get(sector, []):
+            filtered_universe.append(sym)
+    # All other sectors: keep
+    else:
+        filtered_universe.append(sym)
+
+universe = filtered_universe
+print(f"Universe after sector filter: {len(universe)} (removed {original_size - len(universe)} from LAGGING sectors: {', '.join(sorted(lagging_sectors))})")
+if extended_sectors:
+    print(f"Extended rotation sectors (>8% 20D): {', '.join(sorted(extended_sectors))} — candidates marked for pullback entries only")
+```
+
 Print the total universe size and batch sizes before proceeding to Phase 1.5.
 
 ---
@@ -353,6 +407,7 @@ Spawn ALL FIVE agents simultaneously in a SINGLE message with multiple Task tool
 - Prompt (dynamic data only — the agent's system prompt already defines the full analysis process):
 
 > **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
+> **Market regime (pre-computed — DO NOT call analyze_market_regime())**: {paste regime JSON from Step 1.0}
 > **Filtered candidates** (from screening): {paste the filtered symbol list with CSS scores}
 > **Current portfolio positions [PORTFOLIO — MANDATORY]**: {paste position symbols and directions from Phase 1}
 
@@ -383,6 +438,7 @@ Spawn ALL FIVE agents simultaneously in a SINGLE message with multiple Task tool
 - Prompt (dynamic data only):
 
 > **Trading mode**: {mode} — prepend `TRADING_MODE={mode}` to all CLI commands. For inline Python: `import os; os.environ['TRADING_MODE'] = '{mode}'` as the first line.
+> **Market regime (pre-computed — DO NOT call analyze_market_regime())**: {paste regime JSON from Step 1.0}
 > **Current portfolio positions**: {paste full position details — symbols, amounts, P&L, leverage, direction}
 > **Portfolio totals**: {paste total value, invested, cash, overall P&L from Phase 1}
 > **Filtered candidates for potential ADD**: {paste candidate symbols}
@@ -469,6 +525,39 @@ When setting BUY conviction level, apply sector_score from sector-rotation agent
 - sector_score −2: downgrade conviction one level
 - sector_score 0/+1: no change
 
+### Step 3.1b: Disposition Effect Detection (SELL Escalation)
+
+**CRITICAL: Check the disposition tracker from History Agent (Step 1.2).** For each portfolio position, count how many consecutive analyses it has been in ALERT or WATCH status:
+
+- **3+ consecutive ALERT**: `"🔴 DISPOSITION ALERT: {SYMBOL} has been ALERT for {N} consecutive analyses. System auto-escalates to SELL RECOMMENDED. Holding solely on hope of recovery is a proven behavioral bias — the system says exit."`
+  - **Auto-upgrade verdict to SELL** in Phase 3.3 unless there is a clear, new bullish catalyst (not just "waiting for recovery")
+- **2 consecutive ALERT**: `"⚠️ ESCALATION WARNING: {SYMBOL} has been ALERT for 2 analyses. One more → automatic SELL recommendation."`
+- **3+ consecutive WATCH with deteriorating P&L**: `"⚠️ STALE WATCH: {SYMBOL} has been WATCH for {N} analyses with no improvement. Evaluate if thesis is still valid."`
+
+This prevents the disposition effect where losing positions are held too long because the system softens SELL signals to "HIGH ALERT HOLD".
+
+### Step 3.1c: Tax-Loss Harvesting Opportunities
+
+For each portfolio position with negative P&L, evaluate tax-loss harvesting potential (Czech 15% income tax):
+
+```python
+for p in positions:
+    pnl = p.get('net_profit') or p.get('pnl') or 0
+    if pnl < 0:
+        tax_saving = abs(pnl) * 0.15
+        net_cost = abs(pnl) - tax_saving
+        days_held = aging.get(p['symbol'], {}).get('days_held', 0)
+        if days_held > 14 and abs(pnl) > 20:
+            print(f"TAX-LOSS HARVEST: {p['symbol']} — loss ${pnl:.2f} (held {days_held}d)")
+            print(f"  Tax saving: ${tax_saving:.2f} | Net effective cost: ${net_cost:.2f}")
+            print(f"  Consider: is there better capital deployment? Is the thesis broken?")
+```
+
+Flag prominently in analysis cards for positions meeting ALL criteria:
+- P&L < -10% AND held > 30 days → `"🔴 TAX-LOSS HARVEST CANDIDATE"`
+- P&L < 0% AND held > 60 days → `"⚠️ CHRONIC UNDERPERFORMER"`
+- Always show: gross loss + tax saving (loss × 0.15) + net effective cost
+
 ### Step 3.2: Position-by-Position Analysis Cards
 
 For EACH position in portfolio AND each new candidate with a BUY recommendation, create an analysis card:
@@ -503,6 +592,11 @@ For EACH position in portfolio AND each new candidate with a BUY recommendation,
 | # | Symbol | Amount | P&L | Trend | MA Align | Note |
 |---|--------|--------|-----|-------|----------|------|
 
+### Pullback Watch (candidates with good setups but R:R < 1:2 at current price)
+| # | Symbol | Current Price | Ideal Entry Zone | % Pullback Needed | Setup Score | Sector RS | Note |
+|---|--------|--------------|-----------------|-------------------|-------------|-----------|------|
+(These are stocks with bullish setups that need a pullback to achieve R:R >= 1:2. Morning check will monitor proximity to entry zones.)
+
 ### Summary
 - Total SELL: $X (freeing capital)
 - Total BUY: $Y (new deployment, VIX-adjusted)
@@ -511,6 +605,7 @@ For EACH position in portfolio AND each new candidate with a BUY recommendation,
 - Estimated total spread/commission cost: $W
 - Average R:R of BUY orders: X:Y
 - Average Setup Score of BUY orders: X/10
+- Pullback Watch: N symbols awaiting entry (next morning-check will monitor)
 ```
 
 ### Step 3.4: HARD GATE — WAIT FOR USER APPROVAL
@@ -586,10 +681,31 @@ if result.success:
         print(f"  WARNING: {SYMBOL} position still appears in portfolio!")
 ```
 
-### For BUY verdicts:
+### For BUY verdicts (with limit order fallback):
+
+**Price Freshness Check**: Before executing each BUY, check if current price is within the entry zone from Phase 3. If price has moved above the entry zone, offer a **limit order** instead of a market order:
+
+```python
+from src.market.data import get_rate, resolve_symbol
+iid_data = resolve_symbol("SYMBOL")
+iid = iid_data['instrument_id'] if isinstance(iid_data, dict) else iid_data
+live_rate = get_rate(iid)
+current_price = live_rate.ask if live_rate else PHASE3_PRICE
+
+# entry_zone_low and entry_zone_high come from Phase 3 technical analysis
+if current_price > ENTRY_ZONE_HIGH * 1.005:  # >0.5% above entry zone
+    print(f"⚠️ {SYMBOL} price ${current_price:.2f} is ABOVE entry zone ${ENTRY_ZONE_LOW:.2f}-${ENTRY_ZONE_HIGH:.2f}")
+    print(f"   Options: (a) LIMIT ORDER at ${(ENTRY_ZONE_LOW + ENTRY_ZONE_HIGH)/2:.2f}, (b) MARKET ORDER now, (c) SKIP")
+    # Default: use limit order at entry zone midpoint
+    USE_LIMIT_ORDER = True
+    LIMIT_PRICE = round((ENTRY_ZONE_LOW + ENTRY_ZONE_HIGH) / 2, 2)
+else:
+    USE_LIMIT_ORDER = False
+```
+
 ```python
 from config import AggressiveRiskLimits
-from src.trading.engine import open_position
+from src.trading.engine import open_position, create_limit_order
 from src.trading.atr_stops import calculate_position_size
 from src.portfolio.manager import get_portfolio
 from src.market.data import resolve_symbol
@@ -616,20 +732,33 @@ final_amount = round(sizing.get("amount", 0) * vix_adj, 2)
 print(f"  Sizing: ${sizing.get('amount',0):.0f} × VIX adj {vix_adj} = ${final_amount:.0f}")
 
 if final_amount >= 50:
-    # 2. Execute trade with ATR stops + trailing SL
-    result = open_position(
-        symbol="SYMBOL",
-        amount=final_amount,
-        direction="BUY",
-        atr_value=ATR_VALUE,
-        trailing_sl=True,
-        limits_override=AggressiveRiskLimits(),
-        reason="analyze-portfolio: [brief reason]"
-    )
-    print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
+    # 2. Execute trade — LIMIT ORDER if price above entry zone, MARKET ORDER otherwise
+    if USE_LIMIT_ORDER:
+        result = create_limit_order(
+            symbol="SYMBOL",
+            amount=final_amount,
+            direction="BUY",
+            rate=LIMIT_PRICE,
+            atr_value=ATR_VALUE,
+            limits_override=AggressiveRiskLimits(),
+            reason=f"analyze-portfolio: limit order at ${LIMIT_PRICE} (entry zone)"
+        )
+        print(f"LIMIT BUY {SYMBOL} ${final_amount} @ ${LIMIT_PRICE}: {result.message}")
+        # Limit orders don't need immediate verification — they fill when price reaches the level
+    else:
+        result = open_position(
+            symbol="SYMBOL",
+            amount=final_amount,
+            direction="BUY",
+            atr_value=ATR_VALUE,
+            trailing_sl=True,
+            limits_override=AggressiveRiskLimits(),
+            reason="analyze-portfolio: [brief reason]"
+        )
+        print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
 
-    # 3. Post-trade verification
-    if result.success:
+    # 3. Post-trade verification (market orders only — limit orders fill later)
+    if result.success and not USE_LIMIT_ORDER:
         time.sleep(8)
         portfolio = get_portfolio()
         # resolve_symbol returns a dict {'instrument_id': int, ...}, NOT a bare int

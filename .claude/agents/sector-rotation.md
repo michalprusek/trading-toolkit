@@ -23,43 +23,10 @@ tailwinds or headwinds?
 5. Integrate macro context (10Y yield, DXY, credit signal from prompt) into sector recommendations
 6. Assign a sector_score to each BUY candidate for Phase 3 conviction adjustment
 
-**Sector-to-ETF lookup (SYMBOL_SECTOR_MAP):**
-Use this mapping for all position/candidate lookups. If a symbol is not in the map, assign "OTHER".
+**Sector-to-ETF lookup (centralized module):**
+Use the centralized mapping for all position/candidate lookups. If a symbol is not in the map, assign "OTHER".
 ```python
-SYMBOL_SECTOR_MAP = {
-    # Technology (XLK)
-    'AAPL':'XLK','MSFT':'XLK','NVDA':'XLK','AMD':'XLK','AVGO':'XLK','ORCL':'XLK',
-    'CRM':'XLK','ADBE':'XLK','INTC':'XLK','CSCO':'XLK','NOW':'XLK','PLTR':'XLK',
-    'PANW':'XLK','CRWD':'XLK','DDOG':'XLK','NET':'XLK','ZS':'XLK','TEAM':'XLK',
-    'MRVL':'XLK','MU':'XLK','ANET':'XLK','ASML':'XLK','TSM':'XLK','KLAC':'XLK',
-    'LRCX':'XLK','QCOM':'XLK','TXN':'XLK','ON':'XLK','SMCI':'XLK','ARM':'XLK',
-    'DELL':'XLK','WDAY':'XLK','SNOW':'XLK','XYZ':'XLK',
-    # Communication (XLC)
-    'GOOGL':'XLC','META':'XLC','NFLX':'XLC','DIS':'XLC','CMCSA':'XLC','T':'XLC','VZ':'XLC',
-    # Consumer Discretionary (XLY)
-    'AMZN':'XLY','TSLA':'XLY','UBER':'XLY','SHOP':'XLY','HD':'XLY','NKE':'XLY',
-    'SBUX':'XLY','MCD':'XLY','TJX':'XLY','BKNG':'XLY','ABNB':'XLY','CMG':'XLY',
-    # Financials (XLF)
-    'JPM':'XLF','BAC':'XLF','GS':'XLF','MS':'XLF','V':'XLF','MA':'XLF','BLK':'XLF',
-    'AXP':'XLF','C':'XLF','SCHW':'XLF','PYPL':'XLF','COIN':'XLF','SOFI':'XLF','HOOD':'XLF',
-    # Healthcare (XLV)
-    'UNH':'XLV','JNJ':'XLV','LLY':'XLV','PFE':'XLV','ABBV':'XLV','MRK':'XLV',
-    'TMO':'XLV','ABT':'XLV','AMGN':'XLV','ISRG':'XLV','GILD':'XLV','REGN':'XLV','VRTX':'XLV','MRNA':'XLV',
-    # Industrials & Defense (XLI)
-    'LMT':'XLI','RTX':'XLI','NOC':'XLI','GD':'XLI','LHX':'XLI','HII':'XLI','BA':'XLI',
-    'LDOS':'XLI','CAT':'XLI','DE':'XLI','GE':'XLI','HON':'XLI','UNP':'XLI','MMM':'XLI',
-    # Energy (XLE)
-    'XOM':'XLE','CVX':'XLE','COP':'XLE','SLB':'XLE','EOG':'XLE','MPC':'XLE','PSX':'XLE','OXY':'XLE',
-    # Consumer Staples (XLP)
-    'PG':'XLP','KO':'XLP','PEP':'XLP','COST':'XLP','WMT':'XLP','CL':'XLP',
-    # Materials (XLB)
-    'LIN':'XLB','APD':'XLB','FCX':'XLB','NEM':'XLB',
-    # Real Estate (XLRE)
-    'PLD':'XLRE','AMT':'XLRE','EQIX':'XLRE','SPG':'XLRE',
-    # Utilities (XLU)
-    'NEE':'XLU','DUK':'XLU','SO':'XLU',
-}
-CRYPTO_SYMBOLS = {'BTC','ETH','SOL','ADA','XRP','DOGE','DOT','AVAX','LINK','UNI','NEAR'}
+from src.market.sectors import SYMBOL_SECTOR_MAP, CRYPTO_SYMBOLS, SECTOR_ETFS, get_sector
 ```
 
 **Step 1 — Parse sector rankings from prompt (pre-computed in Phase 1.0b)**

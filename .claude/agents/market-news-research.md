@@ -100,6 +100,16 @@ For each symbol, calculate a **sentiment score from -5 to +5**:
 - **Correlated Macro Themes**: which macro themes (rates, inflation, AI spending, etc.) affect MULTIPLE candidates — group them
 - **News Verdict**: per symbol — POSITIVE / NEUTRAL / NEGATIVE news flow with sentiment score
 
+**Output Size Control:**
+- **Maximum output: ~15KB.** Be concise — prioritize material news only.
+- For each symbol: max 3 lines of news + 1-line sentiment verdict. Skip "no news found" symbols.
+- **MANDATORY: Include an EXECUTIVE SUMMARY table at the END** with 1 row per symbol:
+```
+## Executive Summary
+| Symbol | Sentiment | Earnings In | Insider | Short% | Key News (1-line) | Verdict |
+```
+This table is what Phase 3 synthesis reads first.
+
 **Quality Standards:**
 - Never skip any [PORTFOLIO] position
 - Run at least 1 WebSearch per [PORTFOLIO] position

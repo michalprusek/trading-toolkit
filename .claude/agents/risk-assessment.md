@@ -21,14 +21,9 @@ You are the Risk Assessment agent. You evaluate portfolio risk, learn from trade
 
 **Analysis Process:**
 
-**Market Regime (run FIRST):**
-```python
-from src.market.data import analyze_market_regime
-import json
+**Market Regime (pre-computed — DO NOT re-fetch):**
 
-regime = analyze_market_regime()
-print(json.dumps(regime, indent=2, default=str))
-```
+Your prompt includes `market_regime_json` — the full market regime data already computed by the orchestrator. **Do NOT call `analyze_market_regime()`** — parse the JSON from your prompt instead. This saves 3 API calls.
 
 Extract VIX value, regime, sizing_adjustment, and overall bias. Use these in scenario analysis.
 
@@ -86,34 +81,7 @@ python3 cli.py memory list --limit 20
 
 ```python
 import sqlite3
-
-# Sector proxy betas (well-established approximations)
-SECTOR_BETAS = {'XLK':1.35,'XLC':1.20,'XLY':1.15,'XLF':1.10,'XLE':0.95,
-                'XLI':1.05,'XLV':0.75,'XLP':0.55,'XLU':0.50,'XLB':1.00,'XLRE':0.85}
-CRYPTO_SYMBOLS = {'BTC','ETH','SOL','ADA','XRP','DOGE','DOT','AVAX','LINK','UNI','NEAR'}
-# Full SYMBOL_SECTOR_MAP is maintained in sector-rotation.md — copy the dict from there
-SYMBOL_SECTOR_MAP = {
-    'AAPL':'XLK','MSFT':'XLK','NVDA':'XLK','AMD':'XLK','AVGO':'XLK','ORCL':'XLK',
-    'CRM':'XLK','ADBE':'XLK','INTC':'XLK','CSCO':'XLK','NOW':'XLK','PLTR':'XLK',
-    'PANW':'XLK','CRWD':'XLK','DDOG':'XLK','NET':'XLK','ZS':'XLK','TEAM':'XLK',
-    'MRVL':'XLK','MU':'XLK','ANET':'XLK','ASML':'XLK','TSM':'XLK','KLAC':'XLK',
-    'LRCX':'XLK','QCOM':'XLK','TXN':'XLK','ON':'XLK','SMCI':'XLK','ARM':'XLK',
-    'DELL':'XLK','WDAY':'XLK','SNOW':'XLK','XYZ':'XLK',
-    'GOOGL':'XLC','META':'XLC','NFLX':'XLC','DIS':'XLC','CMCSA':'XLC','T':'XLC','VZ':'XLC',
-    'AMZN':'XLY','TSLA':'XLY','UBER':'XLY','SHOP':'XLY','HD':'XLY','NKE':'XLY',
-    'SBUX':'XLY','MCD':'XLY','TJX':'XLY','BKNG':'XLY','ABNB':'XLY','CMG':'XLY',
-    'JPM':'XLF','BAC':'XLF','GS':'XLF','MS':'XLF','V':'XLF','MA':'XLF','BLK':'XLF',
-    'AXP':'XLF','C':'XLF','SCHW':'XLF','PYPL':'XLF','COIN':'XLF','SOFI':'XLF','HOOD':'XLF',
-    'UNH':'XLV','JNJ':'XLV','LLY':'XLV','PFE':'XLV','ABBV':'XLV','MRK':'XLV',
-    'TMO':'XLV','ABT':'XLV','AMGN':'XLV','ISRG':'XLV','GILD':'XLV','REGN':'XLV','VRTX':'XLV','MRNA':'XLV',
-    'LMT':'XLI','RTX':'XLI','NOC':'XLI','GD':'XLI','LHX':'XLI','HII':'XLI','BA':'XLI',
-    'LDOS':'XLI','CAT':'XLI','DE':'XLI','GE':'XLI','HON':'XLI','UNP':'XLI','MMM':'XLI',
-    'XOM':'XLE','CVX':'XLE','COP':'XLE','SLB':'XLE','EOG':'XLE','MPC':'XLE','PSX':'XLE','OXY':'XLE',
-    'PG':'XLP','KO':'XLP','PEP':'XLP','COST':'XLP','WMT':'XLP','CL':'XLP',
-    'LIN':'XLB','APD':'XLB','FCX':'XLB','NEM':'XLB',
-    'PLD':'XLRE','AMT':'XLRE','EQIX':'XLRE','SPG':'XLRE',
-    'NEE':'XLU','DUK':'XLU','SO':'XLU',
-}
+from src.market.sectors import SYMBOL_SECTOR_MAP, SECTOR_BETAS, CRYPTO_SYMBOLS, get_beta
 
 pos_with_beta = []
 total_inv = sum(p['amount'] for p in positions)
@@ -160,6 +128,42 @@ if snaps:
         print("✅ Portfolio at or above peak — consider tightening trailing stops to protect gains")
 ```
 
+- **Tax-Loss Harvesting Opportunities:**
+
+```python
+from datetime import datetime
+conn = sqlite3.connect('data/etoro.db')
+rows = conn.execute(
+    "SELECT symbol, direction, timestamp FROM trade_log WHERE status='executed' ORDER BY timestamp ASC"
+).fetchall()
+conn.close()
+now = datetime.utcnow()
+for p in positions:
+    sym = p['symbol']
+    pnl = p.get('net_profit') or p.get('pnl') or 0
+    amount = p.get('amount', 0)
+    # Find hold duration
+    for s, d, ts in rows:
+        if s == sym and d == 'BUY':
+            try:
+                opened = datetime.fromisoformat(ts.replace('Z',''))
+                days = (now - opened).days
+                if pnl < 0 and days > 14:
+                    tax_saving = abs(pnl) * 0.15  # Czech 15% tax
+                    net_cost = abs(pnl) - tax_saving
+                    print(f"🔴 TAX-LOSS HARVEST: {sym} — loss ${pnl:.2f} (held {days}d) → saves ${tax_saving:.2f} tax → net cost ${net_cost:.2f}")
+                elif pnl < 0 and days > 30:
+                    print(f"⚠️ UNDERPERFORMER: {sym} — loss ${pnl:.2f} held {days}d — reevaluate thesis")
+            except Exception:
+                pass
+            break
+```
+
+Flag positions meeting these criteria:
+- **P&L < -10% AND held > 30 days**: `"🔴 TAX-LOSS HARVEST CANDIDATE: Loss $X saves $Y tax (15%). Net effective cost: $Z"`
+- **P&L < 0% AND held > 60 days**: `"⚠️ CHRONIC UNDERPERFORMER — evaluate exit thesis"`
+- Always show: gross loss + tax saving (15%) + net effective cost
+
 - **Diversification Suggestions**: Based on correlation analysis, suggest the **top 3 candidates** from the filtered list that would MOST improve portfolio diversification (i.e., low correlation with existing positions, ideally from underrepresented sectors).
 
 - **Historical Patterns** (from trade_log and position_closes):
@@ -173,7 +177,7 @@ if snaps:
 - **Risk Verdict**: LOW / MODERATE / HIGH overall portfolio risk with specific reasoning. Include VIX regime and sector exposure in the verdict.
 
 **Quality Standards:**
-- Always run market regime check FIRST for VIX data
+- Parse market regime from prompt (pre-computed) — do NOT call analyze_market_regime()
 - Always calculate exact circuit breaker headroom
 - Run risk check for every position
 - Group ALL positions into correlation groups
