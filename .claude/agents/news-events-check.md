@@ -2,7 +2,7 @@
 name: news-events-check
 description: Use this agent to scan overnight news and today's macro calendar for portfolio holdings. Uses structured APIs plus minimal WebSearch. Triggered by morning checks or when user asks about overnight news, earnings dates, or macro events.
 
-model: sonnet
+model: opus
 color: yellow
 tools: ["Bash", "Read", "Grep", "WebSearch", "WebFetch"]
 ---

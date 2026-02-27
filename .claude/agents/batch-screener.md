@@ -2,7 +2,7 @@
 name: batch-screener
 description: Use this agent to screen a batch of symbols using CSS (Composite Screening Score) for the full portfolio analysis. Handles portfolio positions specially — always includes them regardless of score. Triggered during /analyze-portfolio Phase 1.5 screening.
 
-model: sonnet
+model: opus
 color: green
 tools: ["Bash", "Read", "Grep"]
 ---

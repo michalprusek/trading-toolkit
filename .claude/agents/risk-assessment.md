@@ -2,7 +2,7 @@
 name: risk-assessment
 description: Use this agent for portfolio risk assessment. Evaluates concentration, exposure, correlation, scenarios, historical patterns, and circuit breaker proximity. Triggered during /analyze-portfolio Phase 2 or standalone when user asks about portfolio risk.
 
-model: sonnet
+model: opus
 color: red
 tools: ["Bash", "Read", "Grep"]
 ---

@@ -5,7 +5,7 @@ description: >
   Compares planned vs actual exit, classifies outcome type (target hit /
   SL hit / manual close), and saves a lesson to the memories table.
   Triggered by close confirmations or when the user asks to journal a trade.
-model: haiku
+model: opus
 color: purple
 tools: ["Bash", "Read", "Grep"]
 ---

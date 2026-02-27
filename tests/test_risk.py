@@ -106,12 +106,12 @@ class TestLimitsOverride:
 
     @patch("src.trading.risk.get_portfolio")
     def test_aggressive_still_rejects_over_max(self, mock_portfolio):
-        """AggressiveRiskLimits still rejects $5000 (over $3000 max)."""
+        """AggressiveRiskLimits still rejects $6000 (over $5000 max)."""
         mock_portfolio.return_value = _mock_portfolio(
             total_invested=5000, cash=15000, total_pnl=0
         )
         aggressive = AggressiveRiskLimits()
-        result = check_trade("AAPL", 5000, "BUY", limits_override=aggressive)
+        result = check_trade("AAPL", 6000, "BUY", limits_override=aggressive)
         assert not result.passed
         assert any("exceeds maximum" in v for v in result.violations)
 

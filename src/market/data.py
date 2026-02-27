@@ -186,7 +186,7 @@ def analyze_instrument(symbol: str, extended: bool = False) -> dict:
 
     iid = info["instrument_id"]
     rate = get_rate(iid)
-    df = get_candles(iid, "OneDay", 60)
+    df = get_candles(iid, "OneDay", 220)
 
     if df.empty:
         return {
@@ -496,6 +496,13 @@ def analyze_market_regime() -> dict[str, Any]:
         }
     else:
         regime["errors"].append("VIX: Could not fetch from external sources (defaulting to NORMAL)")
+        # Provide safe defaults so callers don't KeyError on regime["vix"]
+        regime["vix"] = {
+            "value": None,
+            "regime": "UNKNOWN",
+            "guidance": "VIX unavailable — assuming normal volatility.",
+            "sizing_adjustment": 1.0,
+        }
 
     # Overall market bias — requires at least one index to be available
     spy_present = "spy" in regime
@@ -514,7 +521,8 @@ def analyze_market_regime() -> dict[str, Any]:
     spy_above_20 = regime.get("spy", {}).get("above_sma20", False)
     spy_above_50 = regime.get("spy", {}).get("above_sma50", False)
     # Conservative default: when VIX is unavailable treat as NOT ok (avoid biasing to RISK_ON)
-    vix_ok = "vix" in regime and regime["vix"]["value"] < 25
+    vix_val_raw = regime.get("vix", {}).get("value")
+    vix_ok = vix_val_raw is not None and vix_val_raw < 25
 
     bull_score = sum([spy_bull, qqq_bull, spy_above_20, spy_above_50, vix_ok])
     if bull_score >= 4:

@@ -81,20 +81,20 @@ Optional external API keys for news/data: `FINNHUB_API_KEY`, `MARKETAUX_API_KEY`
 
 ### Database
 
-SQLite with WAL mode, 6 tables: `portfolio_snapshots`, `trade_log`, `position_closes`, `memories`, `instruments`, `daily_pnl`. Schema in `storage/database.py`, auto-created on CLI startup.
+SQLite with WAL mode, 6 tables: `portfolio_snapshots`, `trade_log`, `position_closes`, `memories`, `instruments`, `daily_pnl`. Schema in `storage/database.py`, auto-created on CLI startup. Daily loss circuit breaker reads from `position_closes` (not `daily_pnl` which is unused). `get_snapshots()` accepts optional `mode` parameter to filter demo/real.
 
 ### Risk Limits (defaults in config.py)
 
 $10–$1000 per trade, max 10% concentration, max 90% exposure, max 20 positions, 3% daily loss circuit breaker, 1.0x max leverage.
 
-**AggressiveRiskLimits** (used by `/analyze-portfolio` autonomous execution): $50–$3000 per trade, max 20% concentration, max 95% exposure, 5% daily loss circuit breaker, 1.0x max leverage.
+**AggressiveRiskLimits** (used by `/analyze-portfolio` autonomous execution): $50–$5000 per trade (safety guard above sizing), max 20% concentration, max 95% exposure, 5% daily loss circuit breaker, 1.0x max leverage.
 
 ### Chandelier Exit + SuperTrend Stops (`src/trading/atr_stops.py`, `src/market/indicators.py`)
 
 - `calculate_chandelier_stops(df, price, direction)` — **primary TSL method**. Stop = `Highest_High(22) - 3×ATR` for BUY (retreats more slowly than a simple ATR trailing stop, but can still decrease when ATR expands sharply). SuperTrend (14/3) provides trend-state gate. Returns `sl_rate`, `sl_pct`, `trend_up`, `supertrend_value`, `method="chandelier"`.
 - `calculate_atr_stops(price, atr, direction)` — legacy scalar fallback (2x ATR for SL, 3x ATR for TP, clamped 1-15%). Used when OHLC df not available.
-- `calculate_position_size(portfolio_value, cash, atr, price, conviction)` — conviction-based sizing: strong (3% risk, $3K max), moderate (2%, $1.5K), weak (1%, $500). ATR-adjusted, $200 cash buffer, halved if exposure >80%.
-- `open_position()` accepts `df` (OHLCV DataFrame for Chandelier stops), `atr_value` (scalar fallback), `trailing_sl`, `limits_override`. **TSL auto-enabled for BUY positions when df is provided and SuperTrend is bullish** (`chandelier["trend_up"] == True`). TSL is never auto-enabled for SELL direction.
+- `calculate_position_size(portfolio_value, cash, atr, price, conviction, sl_distance_pct=None)` — SL-aware sizing with concentration caps. Sizes position so SL hit = risk_budget loss, then caps by concentration %. Conviction levels: strong (2% risk, 8% max concentration), moderate (1.5% risk, 5% concentration), weak (1% risk, 3% concentration). Returns `amount`, `actual_risk`, `actual_risk_pct`, `binding_constraint`. Accepts optional `sl_distance_pct` for exact SL-based sizing; falls back to 2×ATR estimate. $200 cash buffer, halved if exposure >80%.
+- `open_position()` accepts `df` (OHLCV DataFrame for Chandelier stops), `atr_value` (scalar fallback), `trailing_sl`, `limits_override`. **TSL is controlled by SuperTrend**: when `df` is provided, `engine.py` overrides `trailing_sl` — sets `True` only when `chandelier["trend_up"] == True` for BUY, forces `False` otherwise. Callers should not hardcode `trailing_sl=True`.
 - `analyze_instrument()` returns `chandelier.long_stop`, `chandelier.short_stop`, `chandelier.trend_up`, `chandelier.supertrend` in every analysis result.
 
 **TSL recommendation for existing positions (eToro UI manual entry):**

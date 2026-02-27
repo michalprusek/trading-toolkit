@@ -2,7 +2,7 @@
 name: fundamental-analysis
 description: Use this agent for fundamental analysis during full portfolio analysis. Gathers valuation, profitability, analyst ratings, earnings, dividends, ESG, and fee estimates. Triggered during /analyze-portfolio Phase 2 deep research.
 
-model: sonnet
+model: opus
 color: magenta
 tools: ["Bash", "Read", "Grep"]
 ---

@@ -82,9 +82,12 @@ def open_position(
         if "error" not in chandelier:
             sl_rate = chandelier["sl_rate"]
             sl_method = "chandelier"
-            # Enable TSL automatically for BUY when SuperTrend confirms the trend.
-            if chandelier["trend_up"] and direction.upper() == "BUY":
-                trailing_sl = True
+            # TSL only when SuperTrend confirms bullish trend for BUY.
+            # Override caller's trailing_sl to prevent TSL in bearish downtrends.
+            if direction.upper() == "BUY":
+                trailing_sl = bool(chandelier["trend_up"])
+            else:
+                trailing_sl = False
         else:
             _log.warning(
                 "Chandelier stop failed for %s (%s) — falling back to percentage SL",
@@ -141,6 +144,7 @@ def close_position(
     reason: str | None = None,
 ) -> TradeResult:
     trade_log = TradeLogRepo()
+    symbol = ""
 
     # If instrument_id not provided, look it up from portfolio
     if instrument_id is None:
@@ -149,6 +153,15 @@ def close_position(
         for p in portfolio.positions:
             if p.position_id == position_id:
                 instrument_id = p.instrument_id
+                symbol = getattr(p, "symbol", "")
+                break
+    else:
+        # Even when instrument_id is provided, try to get the symbol
+        from src.portfolio.manager import get_portfolio
+        portfolio = get_portfolio()
+        for p in portfolio.positions:
+            if p.position_id == position_id:
+                symbol = getattr(p, "symbol", "")
                 break
 
     if instrument_id is None:
@@ -162,16 +175,16 @@ def close_position(
         client = _get_client()
         path = endpoints.close_trade_path(position_id)
         resp = client.post(path, {"InstrumentId": instrument_id})
-        trade_log.log_close(position_id, symbol="", pnl=None, reason=reason)
+        trade_log.log_close(position_id, symbol=symbol, pnl=None, reason=reason)
         return TradeResult(
             success=True,
             position_id=position_id,
-            message=f"Closed position {position_id}",
+            message=f"Closed position {position_id} ({symbol})",
             raw=resp if isinstance(resp, dict) else {"status": "ok"},
         )
     except Exception as e:
         _log.exception("close_position failed for position %s", position_id)
-        trade_log.log_close(position_id, symbol="", pnl=None, reason=f"FAILED: {e}")
+        trade_log.log_close(position_id, symbol=symbol, pnl=None, reason=f"FAILED: {e}")
         return TradeResult(success=False, message=str(e))
 
 
@@ -184,10 +197,12 @@ def create_limit_order(
     tp_pct: float | None = None,
     leverage: float = 1.0,
     reason: str | None = None,
+    limits_override: RiskLimits | None = None,
 ) -> TradeResult:
     trade_log = TradeLogRepo()
-    sl_pct = sl_pct or settings.risk.default_stop_loss_pct
-    tp_pct = tp_pct or settings.risk.default_take_profit_pct
+    active_limits = limits_override or settings.risk
+    sl_pct = sl_pct or active_limits.default_stop_loss_pct
+    tp_pct = tp_pct or active_limits.default_take_profit_pct
 
     info = resolve_symbol(symbol)
     if not info:
@@ -196,7 +211,7 @@ def create_limit_order(
 
     iid = info["instrument_id"]
 
-    risk = check_trade(symbol, amount, direction, leverage)
+    risk = check_trade(symbol, amount, direction, leverage, limits_override=limits_override)
     if not risk.passed:
         result = TradeResult(success=False, message=risk.summary)
         trade_log.log_trade(iid, symbol, direction, amount, "rejected",

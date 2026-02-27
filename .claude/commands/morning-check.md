@@ -106,6 +106,24 @@ import os, json, time
 os.environ['TRADING_MODE'] = '{mode}'
 from src.market.fundamentals import get_instrument_fundamentals
 
+import httpx
+_yf = httpx.Client(timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+
+def _yf_52w(ticker):
+    """Fetch 52-week high/low from Yahoo Finance as fallback."""
+    try:
+        r = _yf.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                    params={"interval": "1d", "range": "1y"})
+        if r.status_code == 200:
+            meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            hi = meta.get("fiftyTwoWeekHigh")
+            lo = meta.get("fiftyTwoWeekLow")
+            if hi and lo:
+                return hi, lo
+    except Exception:
+        pass
+    return None, None
+
 fund_flash = {}   # symbol -> {'pt_upside': float, 'consensus': str, 'days_till_earnings': int, 'w52_pct': float}
 for sym in list(dict.fromkeys(p['symbol'] for p in positions)):  # deduplicated, order preserved
     try:
@@ -115,6 +133,9 @@ for sym in list(dict.fromkeys(p['symbol'] for p in positions)):  # deduplicated,
         pp = f.get('price_performance', {})
         price = next((pos.get('current_rate') or pos.get('open_rate', 0) for pos in positions if pos['symbol'] == sym), 0)
         hi, lo = pp.get('high_52w'), pp.get('low_52w')
+        # Yahoo Finance fallback when fundamentals API returns null
+        if (not hi or not lo) and sym != 'BTC':
+            hi, lo = _yf_52w(sym)
         w52_pct = round((price - lo) / (hi - lo) * 100, 0) if hi and lo and hi != lo else None
         fund_flash[sym] = {
             'pt_upside': ar.get('target_upside'),     # e.g. 14.5 = analyst PT is 14.5% above current price
@@ -126,6 +147,7 @@ for sym in list(dict.fromkeys(p['symbol'] for p in positions)):  # deduplicated,
     except Exception:
         fund_flash[sym] = {}
 
+_yf.close()
 print(json.dumps(fund_flash, indent=2, default=str))
 ```
 
@@ -285,38 +307,54 @@ dxy = _yf_last2("DX-Y.NYB") # US Dollar Index
 print(json.dumps({"10y_yield": tnx, "dxy": dxy}, indent=2))
 ```
 
-**Sector Rotation Quick Scan (11 ETFs vs SPY):**
+**Sector Rotation Scan (20-day Relative Strength vs SPX500):**
+
+Uses 20-day returns instead of 1-day gap% — always meaningful regardless of time-of-day (pre-market, intraday, or after-hours).
 
 ```python
 import os, json, time
 os.environ['TRADING_MODE'] = '{mode}'
-from src.market.data import analyze_instrument
+from src.market.data import get_candles, resolve_symbol
 
 SECTOR_MAP = {
     'XLK':'Technology','XLF':'Financials','XLV':'Healthcare','XLE':'Energy',
     'XLI':'Industrials','XLC':'Communication','XLY':'ConsDiscr',
     'XLP':'ConsStaples','XLB':'Materials','XLU':'Utilities','XLRE':'RealEstate'
 }
-spy_result = analyze_instrument('SPY')
-spy_gap = spy_result.get('gap_pct') or 0.0
+
+def _get_20d_return(symbol):
+    """Get 20-day return for a symbol. Returns float % or None."""
+    iid = resolve_symbol(symbol)
+    iid = iid['instrument_id'] if isinstance(iid, dict) else iid
+    if not iid:
+        return None
+    candles = get_candles(iid, 'OneDay', 25)
+    if candles is not None and len(candles) >= 21:
+        return round((candles['close'].iloc[-1] / candles['close'].iloc[-21] - 1) * 100, 2)
+    return None
+
+# SPX500 20-day return (used as benchmark for both sectors and portfolio)
+spx_20d = _get_20d_return('SPX500') or 0.0
+print(f"SPX500 20d return: {spx_20d:+.2f}%")
 
 sector_rs = {}
 for etf, name in SECTOR_MAP.items():
     try:
-        r = analyze_instrument(etf)
-        if 'error' not in r:
-            gap = r.get('gap_pct') or 0.0
-            sector_rs[etf] = {'name': name, 'gap': round(gap, 2),
-                              'vs_spy': round(gap - spy_gap, 2), 'trend': r.get('trend')}
-        time.sleep(0.2)
+        ret = _get_20d_return(etf)
+        if ret is not None:
+            vs_spx = round(ret - spx_20d, 2)
+            sector_rs[etf] = {'name': name, 'ret_20d': ret, 'vs_spx500': vs_spx}
+        time.sleep(0.15)
     except Exception:
         pass
 
-ranked = sorted(sector_rs.items(), key=lambda x: x[1].get('vs_spy', -99), reverse=True)
+ranked = sorted(sector_rs.items(), key=lambda x: x[1].get('vs_spx500', -99), reverse=True)
 for etf, d in ranked:
-    sig = '🟢 IN ROTATION' if d['vs_spy'] > 0.3 else ('🔴 LAGGING' if d['vs_spy'] < -0.3 else '⬜ NEUTRAL')
-    print(f"{sig} {d['name']} ({etf}): gap {d['gap']:+.1f}% | vs SPY {d['vs_spy']:+.1f}%")
+    sig = '🟢 IN ROTATION' if d['vs_spx500'] > 1.0 else ('🔴 LAGGING' if d['vs_spx500'] < -1.0 else '⬜ NEUTRAL')
+    print(f"{sig} {d['name']} ({etf}): 20d {d['ret_20d']:+.1f}% | vs SPX500 {d['vs_spx500']:+.1f}%")
 ```
+
+Note: Sector RS thresholds use ±1.0% for 20-day window (vs ±0.3% for 1-day gap).
 
 Parse and save:
 - **SPY**: trend, RSI, above/below 20 SMA, above/below 50 SMA, MA alignment
@@ -325,7 +363,8 @@ Parse and save:
 - **Overall Bias**: RISK_ON / CAUTIOUS / RISK_OFF
 - **10Y Yield**: current value and direction (RISING/FALLING)
 - **DXY**: current value and direction (RISING/FALLING)
-- **Sector RS**: ranked list of all 11 sector ETFs by gap% vs SPY
+- **Sector RS**: ranked list of all 11 sector ETFs by 20-day return vs SPX500
+- **spx_20d**: save the 20-day SPX500 return for Phase 2 portfolio benchmark
 
 **Pass VIX regime + sizing adjustment to ALL agents** in their prompts.
 
@@ -379,10 +418,10 @@ After ALL THREE subagents return, present a consolidated morning dashboard.
 - **Today's Calendar**: [key events with impact tags: 🔴 RED FLAG / 🟡 YELLOW, or "No major events"]
 - **Market Mood**: [1-line summary from News Agent]
 
-## Sector Rotation (1-day RS vs SPY)
-| # | Sector | ETF | Gap% | vs SPY | Status |
-|---|--------|-----|------|--------|--------|
-(from Phase 0.5 sector scan; sorted best→worst; 🟢 IN ROTATION / ⬜ NEUTRAL / 🔴 LAGGING)
+## Sector Rotation (20-day RS vs SPX500)
+| # | Sector | ETF | 20d Return | vs SPX500 | Status |
+|---|--------|-----|-----------|-----------|--------|
+(from Phase 0.5 sector scan; sorted best→worst; 🟢 IN ROTATION if vs_spx500 > +1.0% / ⬜ NEUTRAL / 🔴 LAGGING if < −1.0%)
 
 ## Portfolio Overview
 | Metric | Value |
@@ -394,6 +433,39 @@ After ALL THREE subagents return, present a consolidated morning dashboard.
 | Daily P&L | $X (X%) |
 | Positions | N |
 | VIX Sizing Adj | X.Xx |
+| vs SPX500 (20d) | Portfolio [pf_return]% \| SPX500 [spx_20d]% \| Alpha [alpha]% |
+
+Before presenting this table, compute portfolio benchmark (mode-filtered, rolling 20-day):
+```python
+import sqlite3, os
+os.environ['TRADING_MODE'] = '{mode}'
+conn = sqlite3.connect('data/etoro.db')
+# Filter by current mode — prevents demo snapshots from polluting real benchmark
+snaps = conn.execute(
+    "SELECT timestamp, total_value FROM portfolio_snapshots WHERE mode = ? ORDER BY timestamp ASC",
+    ('{mode}',)
+).fetchall()
+conn.close()
+
+if len(snaps) >= 2:
+    # Use rolling 20-day window: find the snapshot closest to 20 days ago
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=20)
+    # Find oldest snapshot within the 20-day window (or the absolute oldest if all are recent)
+    baseline = snaps[0]  # fallback: oldest snapshot
+    for ts, val in snaps:
+        snap_dt = datetime.fromisoformat(ts.replace('Z', '+00:00')) if 'Z' in ts else datetime.fromisoformat(ts)
+        snap_dt = snap_dt.replace(tzinfo=None)
+        if snap_dt <= cutoff:
+            baseline = (ts, val)
+    pf_return = round((snaps[-1][1] / baseline[1] - 1) * 100, 1)
+    alpha = round(pf_return - spx_20d, 1)
+    period = baseline[0][:10]
+    print(f"Portfolio return: {pf_return:+.1f}% (since {period}) | SPX500 20d: {spx_20d:+.1f}% | Alpha: {alpha:+.1f}%")
+else:
+    print("Portfolio benchmark: not enough snapshots yet — run 'python3 cli.py portfolio snapshot' first")
+```
 
 ## Historical Performance (Last 30 Days)
 
@@ -514,10 +586,10 @@ When presenting watchlist BUY recommendations, always add:
 
 **Also include the Sector Rotation mini-table in Phase 2 Market Regime section:**
 ```
-## Sector Rotation (1-day RS vs SPY)
-| # | Sector | ETF | Gap% | vs SPY | Status |
-|---|--------|-----|------|--------|--------|
-(sorted best→worst; 🟢 IN ROTATION if vs_spy > +0.3%, 🔴 LAGGING if < −0.3%, ⬜ NEUTRAL otherwise)
+## Sector Rotation (20-day RS vs SPX500)
+| # | Sector | ETF | 20d Return | vs SPX500 | Status |
+|---|--------|-----|-----------|-----------|--------|
+(sorted best→worst; 🟢 IN ROTATION if vs_spx500 > +1.0%, 🔴 LAGGING if < −1.0%, ⬜ NEUTRAL otherwise)
 ```
 **Only recommend BUY candidates from IN ROTATION sectors** (unless setup is extremely compelling for a NEUTRAL sector).
 
@@ -639,12 +711,18 @@ sizing = calculate_position_size(
     price=CURRENT_PRICE,
     conviction="strong|moderate|weak",
     current_exposure_pct=portfolio.total_invested / portfolio.total_value if portfolio.total_value > 0 else 0,
+    sl_distance_pct=SL_DISTANCE_PCT,  # from Chandelier stop: (price - sl_rate) / price
 )
 
-if sizing.get("amount", 0) >= 50:
+# Apply VIX sizing adjustment (computed in Phase 0.5)
+vix_adj = VIX_SIZING_ADJUSTMENT  # e.g. 1.0, 0.75, 0.5, or 0.25
+final_amount = round(sizing.get("amount", 0) * vix_adj, 2)
+print(f"  Sizing: ${sizing.get('amount',0):.0f} × VIX adj {vix_adj} = ${final_amount:.0f}")
+
+if final_amount >= 50:
     result = open_position(
         symbol="SYMBOL",
-        amount=sizing["amount"],
+        amount=final_amount,
         direction="BUY",
         atr_value=ATR_VALUE,
         trailing_sl=True,
@@ -667,7 +745,7 @@ if sizing.get("amount", 0) >= 50:
         else:
             print(f"  WARNING: {SYMBOL} NOT found in portfolio after trade!")
 else:
-    print(f"SKIP {SYMBOL}: calculated amount ${sizing.get('amount', 0):.0f} below $50 minimum")
+    print(f"SKIP {SYMBOL}: VIX-adjusted amount ${final_amount:.0f} below $50 minimum (raw: ${sizing.get('amount', 0):.0f})")
 ```
 
 ### Post-Execution Portfolio State

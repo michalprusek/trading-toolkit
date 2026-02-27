@@ -130,11 +130,13 @@ def calculate_chandelier_stops(
     }
 
 
-# Conviction-level parameters: (risk_pct_of_portfolio, max_trade_usd)
+# Conviction-level parameters: (risk_pct_of_portfolio, max_concentration_pct)
+# risk_pct: max portfolio % lost if SL is hit
+# max_concentration: max portfolio % allocated to a single position
 _CONVICTION = {
-    "strong": (0.03, 3000.0),
-    "moderate": (0.02, 1500.0),
-    "weak": (0.01, 500.0),
+    "strong": (0.02, 0.08),
+    "moderate": (0.015, 0.05),
+    "weak": (0.01, 0.03),
 }
 
 
@@ -145,67 +147,101 @@ def calculate_position_size(
     price: float,
     conviction: str = "moderate",
     current_exposure_pct: float = 0.0,
+    sl_distance_pct: float | None = None,
 ) -> dict:
-    """ATR + conviction-based position sizing.
+    """SL-aware position sizing with concentration caps.
 
-    The risk budget is a percentage of portfolio value determined by conviction.
-    The position size is then: risk_budget / (atr / price), which normalizes
-    across instruments with different volatilities.
+    Sizes the position so that hitting the stop-loss costs exactly risk_budget
+    dollars. Then caps by concentration limit to prevent over-allocation.
+
+    The actual binding constraint depends on the SL distance:
+    - Tight SL (1-3%): risk-based sizing dominates → smaller positions
+    - Wide SL (8-15%): concentration cap dominates → larger positions capped
 
     Args:
         portfolio_value: Total portfolio value (invested + cash + P&L).
         cash_available: Cash remaining in the account.
-        atr: ATR value for the instrument.
+        atr: ATR value (used as SL proxy when sl_distance_pct not provided).
         price: Current instrument price.
         conviction: "strong", "moderate", or "weak".
         current_exposure_pct: Current portfolio exposure as a fraction (0-1).
+        sl_distance_pct: Actual SL distance as fraction (e.g. 0.05 for 5%).
+            When provided, sizing is based on real SL. Otherwise falls back
+            to 2×ATR as SL estimate.
 
     Returns:
-        dict with amount, risk_pct, conviction, method.
+        dict with amount, risk_budget, actual_risk, actual_risk_pct,
+        conviction, binding_constraint, method.
     """
-    if portfolio_value <= 0 or atr <= 0 or price <= 0:
-        return {"error": "Invalid inputs (portfolio_value, atr, price must be > 0)"}
+    if portfolio_value <= 0 or price <= 0:
+        return {"error": "Invalid inputs (portfolio_value, price must be > 0)"}
+    if atr <= 0 and sl_distance_pct is None:
+        return {"error": "Need either atr > 0 or sl_distance_pct"}
 
     conviction = conviction.lower()
     if conviction not in _CONVICTION:
         conviction = "moderate"
 
-    risk_pct, max_trade = _CONVICTION[conviction]
+    risk_pct, max_concentration = _CONVICTION[conviction]
     risk_budget = portfolio_value * risk_pct
 
-    # ATR-adjusted: how many dollars to invest so that a 1-ATR move = risk_budget.
-    # Guard against float underflow (atr/price → 0.0 for extreme value ratios) which
-    # would cause ZeroDivisionError in the next line even though atr > 0 was validated.
-    atr_ratio = atr / price
-    if atr_ratio <= 0:
-        return {"error": f"ATR ratio is zero (atr={atr}, price={price}) — cannot size position"}
-    amount = risk_budget / atr_ratio
+    # Determine SL distance: prefer explicit sl_distance_pct, fall back to 2×ATR.
+    if sl_distance_pct is not None and sl_distance_pct > 0:
+        sl_frac = sl_distance_pct
+    else:
+        sl_frac = (atr * 2) / price
+        sl_frac = max(0.01, min(sl_frac, 0.15))  # clamp 1-15%
 
-    # Cap by max trade size for this conviction level
-    amount = min(amount, max_trade)
+    # Risk-based sizing: invest X so that X × sl_frac = risk_budget.
+    risk_based_amount = risk_budget / sl_frac
+
+    # Concentration cap: max % of portfolio in one position.
+    concentration_cap = portfolio_value * max_concentration
+
+    # Determine binding constraint
+    if risk_based_amount <= concentration_cap:
+        amount = risk_based_amount
+        binding = "risk"
+    else:
+        amount = concentration_cap
+        binding = "concentration"
 
     # Cap by available cash minus $200 buffer
-    cash_buffer = 200.0
-    usable_cash = max(0, cash_available - cash_buffer)
-    amount = min(amount, usable_cash)
+    usable_cash = max(0, cash_available - 200.0)
+    if amount > usable_cash:
+        amount = usable_cash
+        binding = "cash"
 
     # Halve if exposure already above 80%
     if current_exposure_pct > 0.80:
         amount = amount / 2
+        binding = f"{binding}+high_exposure"
 
-    # Floor at $50 minimum (AggressiveRiskLimits min)
+    # Floor at $50 minimum
     if amount < 50:
         return {
             "amount": 0,
-            "risk_pct": risk_pct,
+            "risk_budget": round(risk_budget, 2),
+            "actual_risk": 0,
+            "actual_risk_pct": 0,
             "conviction": conviction,
-            "method": "atr_sizing",
-            "reason": "Calculated amount below $50 minimum",
+            "binding_constraint": "below_minimum",
+            "method": "sl_sizing",
+            "reason": f"Calculated amount ${amount:.0f} below $50 minimum",
         }
+
+    # Calculate actual risk at this position size
+    actual_risk = amount * sl_frac
+    actual_risk_pct = actual_risk / portfolio_value * 100
 
     return {
         "amount": round(amount, 2),
-        "risk_pct": risk_pct,
+        "risk_budget": round(risk_budget, 2),
+        "actual_risk": round(actual_risk, 2),
+        "actual_risk_pct": round(actual_risk_pct, 2),
+        "sl_distance_pct": round(sl_frac * 100, 2),
+        "concentration_pct": round(amount / portfolio_value * 100, 1),
         "conviction": conviction,
-        "method": "atr_sizing",
+        "binding_constraint": binding,
+        "method": "sl_sizing",
     }
