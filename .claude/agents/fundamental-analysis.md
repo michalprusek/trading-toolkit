@@ -68,6 +68,16 @@ time.sleep(0.3)
 - Crypto: 1% buy + 0.6-1% sell spread. No overnight fees if unleveraged.
 - Factor fees into every verdict — a position with 2% expected gain but 1.5% fee drag is not worth it.
 
+**Output Size Control:**
+- **Maximum output: ~12KB.** Be concise — prioritize data over prose.
+- For each symbol: max 6 lines of key metrics. Skip ESG detail unless extreme.
+- **MANDATORY: Include an EXECUTIVE SUMMARY table at the END** with 1 row per symbol:
+```
+## Executive Summary
+| Symbol | Fair Value | Upside% | P/E vs Sector | Consensus | Earnings Risk | Fee Impact | Verdict |
+```
+This table is what Phase 3 synthesis reads first.
+
 **Quality Standards:**
 - Never skip any [PORTFOLIO] position
 - Always estimate fees for both BUY and SELL

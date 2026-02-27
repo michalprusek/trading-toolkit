@@ -45,6 +45,8 @@ CLI commands (Typer) → domain modules → API client → eToro REST API, with 
 
 **Fee estimation**: `cli.py` → `trading/fees.py` (resolve symbol → get spread → estimate spread cost, crypto fees, overnight fees)
 
+**Sector mapping**: `market/sectors.py` — centralized `SYMBOL_SECTOR_MAP` (120 symbols → 11 ETFs), `SECTOR_BETAS`, `CRYPTO_SYMBOLS`, `SEMICONDUCTOR_SYMBOLS`, `get_sector()`, `get_beta()`. Single source of truth used by risk-assessment and sector-rotation agents.
+
 **News aggregation**: `cli.py` → `market/news.py` (Finnhub articles + sentiment, FMP analyst grades + price targets, Marketaux multi-symbol news). Hybrid approach: structured APIs first, WebSearch fills gaps.
 
 **Portfolio view**: `cli.py` → `portfolio/manager.py` (fetch from API → enrich positions with cached instrument data)
@@ -105,9 +107,22 @@ $10–$1000 per trade, max 10% concentration, max 90% exposure, max 20 positions
 
 ### Custom Commands
 
-- `/morning-check` — Lightweight daily portfolio health check. Phases: (0) Get portfolio + watchlist, (0.5) **Market Regime Check** (SPY + QQQ + VIX → bias + sizing adjustment), (1) 3 parallel agents (Technical Quick Check, News & Events, Watchlist Screener), (2) Consolidated morning dashboard with VIX regime, MA alignment, RVOL, earnings calendar, (3) Trade suggestions with entry zones + R:R ratios + hard approval gate, (4) Execute approved trades, (5) Changelog. Enforces earnings block (<5 days), R:R >= 1:2, VIX-adjusted sizing.
+- `/morning-check` — Lightweight daily portfolio health check. Phases: (0) Get portfolio + watchlist + auto trade journal for external closes, (0.5) **Market Regime Check** (SPY + QQQ + VIX → bias + sizing adjustment), (1) 3 parallel agents (Technical Quick Check with pre-computed regime, News & Events, Watchlist Screener), (2) Consolidated morning dashboard with VIX regime, MA alignment, RVOL, earnings calendar, disposition tracker, pre-market notice, (3) Trade suggestions with entry zones + R:R ratios + limit order support + hard approval gate, (4) Execute approved trades (market or limit order), (5) Changelog. Enforces earnings block (<5 days), R:R >= 1:2, VIX-adjusted sizing.
 
-- `/analyze-portfolio` — Comprehensive multi-agent portfolio analysis. Phases: (0) Save snapshot, (1) **Market Regime Check** + load history + portfolio + build ~200-symbol universe, (1.5) 3 parallel CSS screeners (with RVOL + MA alignment bonuses), (2) 4 parallel deep research agents (Technical with entry/SL/TP/R:R + setup score, Fundamental with earnings block, News with insider/short interest/options, Risk with VIX-aware scenarios), (3) Synthesis + trade plan with entry zones + R:R ratios + setup scores + **HARD GATE**, (4) Execute with VIX-adjusted sizing + post-trade verification, (5) Extended changelog. Enforces R:R >= 1:2, earnings block, VIX sizing, sector RS.
+- `/analyze-portfolio` — Comprehensive multi-agent portfolio analysis. Phases: (0) Save snapshot, (1) **Market Regime Check** + load history (with disposition tracker) + portfolio + build ~200-symbol universe + sector-aware filtering, (1.5) 3 parallel CSS screeners (with RVOL + MA alignment bonuses), (2) 5 parallel deep research agents (Technical with pre-computed regime, Fundamental with executive summary, News with output cap + executive summary, Risk with tax-loss harvesting, Sector Rotation with centralized mapping), (3) Synthesis + disposition effect detection + tax-loss harvesting + pullback watchlist + trade plan with limit order support + **HARD GATE**, (4) Execute with VIX-adjusted sizing + limit order fallback + post-trade verification, (5) Extended changelog. Enforces R:R >= 1:2, earnings block, VIX sizing, sector RS.
+
+### Workflow Improvements (v2, 2026-02-27)
+
+- **Market regime dedup** — `analyze_market_regime()` called once in Phase 0/1, pre-computed JSON passed to all agents (Technical, Risk, Quick Check) instead of each agent re-fetching
+- **Agent output size management** — Technical (15KB), Fundamental (12KB), News (15KB) agents have output caps + mandatory Executive Summary tables for Phase 3 synthesis
+- **Disposition effect detection** — tracks consecutive ALERT counts per symbol across analyses; auto-escalates to SELL RECOMMENDED after 3+ consecutive ALERTs (both commands)
+- **Limit order support** — when price exceeds entry zone by >0.5%, uses `create_limit_order()` instead of market order (both commands)
+- **Sector-aware universe filtering** — LAGGING sectors filtered to top 3 symbols only, reducing noise in screening (analyze-portfolio Step 1.4)
+- **Pullback watchlist** — tracks good setups with R:R < 1:2 that need price pullback; loaded from history on next run (analyze-portfolio)
+- **Tax-loss harvesting** — Risk agent flags positions for Czech 15% tax-loss harvesting; shows gross loss + tax saving + net effective cost (analyze-portfolio Step 3.1c)
+- **Centralized sector mapping** — `src/market/sectors.py` replaces inline dicts in agents; 120 symbols → 11 sector ETFs
+- **Auto trade journal** — morning-check auto-spawns trade-journal agent for externally closed positions (SL/TP/manual)
+- **Pre-market awareness** — morning-check shows warning when running before 15:30 CET (US market not yet open)
 
 ### Technical Indicators
 

@@ -97,6 +97,17 @@ else:
 
 Announce any detected closes prominently before the dashboard under **External Closes Detected** if count > 0.
 
+**Auto Trade Journal** — for each newly detected close, spawn a trade-journal agent:
+```
+For each new close detected above, spawn:
+- subagent_type: "trade-journal"
+- model: "haiku"
+- description: "Journal {SYMBOL} close"
+- run_in_background: true
+- Prompt: "Trading mode: {mode}. Record the close of {SYMBOL} (position_id: {pid}, P&L: {pnl}, reason: {reason}). Run Step 2-5 from your process (skip Step 0-1, reconciliation already done)."
+```
+This runs in the background — do not wait for it before continuing.
+
 ### Fundamental Flash Data (per-holding loop)
 
 Quick fundamental scan for analyst price targets and 52-week positioning:
@@ -385,7 +396,7 @@ Spawn ALL THREE subagents simultaneously in a SINGLE message with multiple Task 
 ### Agent 1: Technical Quick Check
 - `subagent_type: "technical-quick-check"`
 - `description: "Technical check holdings"`
-- Prompt: `Trading mode: {mode} — prepend TRADING_MODE={mode} to all CLI commands. For inline Python: import os; os.environ['TRADING_MODE'] = '{mode}' as the first line. Portfolio positions to check: {paste ALL portfolio symbols with their directions, invested amounts, and current P&L}`
+- Prompt: `Trading mode: {mode} — prepend TRADING_MODE={mode} to all CLI commands. For inline Python: import os; os.environ['TRADING_MODE'] = '{mode}' as the first line. Market regime (pre-computed — DO NOT call analyze_market_regime()): {paste regime JSON from Phase 0.5}. Portfolio positions to check: {paste ALL portfolio symbols with their directions, invested amounts, and current P&L}`
 
 ### Agent 2: News & Events Check
 - `subagent_type: "news-events-check"`
@@ -406,7 +417,11 @@ After ALL THREE subagents return, present a consolidated morning dashboard.
 ### Format:
 
 ```markdown
-# Morning Check — {date}
+# Morning Check — {date} ({CET_time} CET / {ET_time} ET)
+
+## Pre-Market Notice
+(Include ONLY if current CET time < 15:30):
+`⚠️ PRE-MARKET ({CET_time} CET) — all prices are yesterday's close. Technical indicators valid, but entry zones may shift at market open (15:30 CET).`
 
 ## Market Regime (Top-Down)
 - **Bias**: [RISK_ON / CAUTIOUS / RISK_OFF] — [1-line guidance]
@@ -518,10 +533,32 @@ Format output:
 `52w%` = position in 52-week range from `fund_flash[sym]["w52_pct"]`. ⚠️ if > 95% (extended). 🟢 if < 15% (potential value zone).
 (sort: ALERTs first, then WATCHes, then HOLDs)
 
+## Disposition Tracker (from changelog history)
+
+Before presenting alerts, read the last 3 entries from the changelog and extract each portfolio symbol's status history:
+
+```python
+# Parse from changelog: {"SYMBOL": ["ALERT","ALERT","HOLD"], ...}
+# Count consecutive ALERT/WATCH from most recent backward
+for sym, statuses in disposition_tracker.items():
+    consecutive_alert = 0
+    for s in statuses:  # most recent first
+        if s in ('ALERT', 'HIGH_ALERT'):
+            consecutive_alert += 1
+        else:
+            break
+    if consecutive_alert >= 3:
+        print(f"🔴 DISPOSITION ALERT: {sym} has been ALERT for {consecutive_alert} consecutive checks.")
+        print(f"   System auto-escalates to SELL RECOMMENDED. Do not hold solely on hope of recovery.")
+    elif consecutive_alert == 2:
+        print(f"⚠️ ESCALATION WARNING: {sym} ALERT for 2 checks. One more → automatic SELL recommendation.")
+```
+
 ## Alerts & Watch Items
 🔴 **ALERT** (action may be needed):
 - SYMBOL: [reason — e.g., "RSI 78 overbought + price at resistance $XXX + RVOL 2.3x selling pressure"]
 - SYMBOL: [reason — e.g., "Earnings in 3 days 🔴 BLOCK + negative analyst revision"]
+- **DISPOSITION ESCALATIONS**: any symbols flagged by the tracker above get auto-upgraded to ALERT with SELL recommendation
 
 🟡 **WATCH** (monitor today):
 - SYMBOL: [reason — e.g., "RSI 72 approaching overbought, MA alignment flipping to MIXED"]
@@ -694,9 +731,22 @@ if result.success:
 ```
 
 ### For BUY orders:
+
+**Price freshness check** — if current price is above the entry zone from Phase 3, use a limit order instead of market order:
+```python
+# entry_zone_low and entry_zone_high come from Phase 3 watchlist screener analysis
+if current_price > ENTRY_ZONE_HIGH * 1.005:  # >0.5% above entry zone
+    print(f"⚠️ {SYMBOL} price ${current_price:.2f} is ABOVE entry zone ${ENTRY_ZONE_LOW:.2f}-${ENTRY_ZONE_HIGH:.2f}")
+    print(f"   Using LIMIT ORDER at ${(ENTRY_ZONE_LOW + ENTRY_ZONE_HIGH)/2:.2f}")
+    USE_LIMIT_ORDER = True
+    LIMIT_PRICE = round((ENTRY_ZONE_LOW + ENTRY_ZONE_HIGH) / 2, 2)
+else:
+    USE_LIMIT_ORDER = False
+```
+
 ```python
 from config import AggressiveRiskLimits
-from src.trading.engine import open_position
+from src.trading.engine import open_position, create_limit_order
 from src.trading.atr_stops import calculate_position_size
 from src.portfolio.manager import get_portfolio
 from src.market.data import resolve_symbol
@@ -720,18 +770,32 @@ final_amount = round(sizing.get("amount", 0) * vix_adj, 2)
 print(f"  Sizing: ${sizing.get('amount',0):.0f} × VIX adj {vix_adj} = ${final_amount:.0f}")
 
 if final_amount >= 50:
-    result = open_position(
-        symbol="SYMBOL",
-        amount=final_amount,
-        direction="BUY",
-        atr_value=ATR_VALUE,
-        trailing_sl=True,
-        limits_override=AggressiveRiskLimits(),
-        reason="morning-check: [brief reason]"
-    )
-    print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
+    # Execute trade — LIMIT ORDER if price above entry zone, MARKET ORDER otherwise
+    if USE_LIMIT_ORDER:
+        result = create_limit_order(
+            symbol="SYMBOL",
+            amount=final_amount,
+            limit_price=LIMIT_PRICE,
+            direction="BUY",
+            limits_override=AggressiveRiskLimits(),
+            reason=f"morning-check: limit order at ${LIMIT_PRICE} (entry zone)"
+        )
+        print(f"LIMIT BUY {SYMBOL} ${final_amount} @ ${LIMIT_PRICE}: {result.message}")
+        # Limit orders don't need immediate verification — they fill when price reaches the level
+    else:
+        result = open_position(
+            symbol="SYMBOL",
+            amount=final_amount,
+            direction="BUY",
+            atr_value=ATR_VALUE,
+            trailing_sl=True,
+            limits_override=AggressiveRiskLimits(),
+            reason="morning-check: [brief reason]"
+        )
+        print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
 
-    if result.success:
+    # Post-trade verification (market orders only — limit orders fill later)
+    if result.success and not USE_LIMIT_ORDER:
         time.sleep(8)
         portfolio = get_portfolio()
         iid_data = resolve_symbol("SYMBOL")
