@@ -547,10 +547,13 @@ for p in positions:
         tax_saving = abs(pnl) * 0.15
         net_cost = abs(pnl) - tax_saving
         days_held = aging.get(p['symbol'], {}).get('days_held', 0)
-        if days_held > 14 and abs(pnl) > 20:
-            print(f"TAX-LOSS HARVEST: {p['symbol']} — loss ${pnl:.2f} (held {days_held}d)")
+        pnl_pct = (pnl / p.get('amount', 1) * 100) if p.get('amount', 0) > 0 else 0
+        if pnl_pct < -10 and days_held > 30:
+            print(f"🔴 TAX-LOSS HARVEST: {p['symbol']} — loss ${pnl:.2f} ({pnl_pct:.0f}%, held {days_held}d)")
             print(f"  Tax saving: ${tax_saving:.2f} | Net effective cost: ${net_cost:.2f}")
             print(f"  Consider: is there better capital deployment? Is the thesis broken?")
+        elif pnl < 0 and days_held > 60:
+            print(f"⚠️ CHRONIC UNDERPERFORMER: {p['symbol']} — loss ${pnl:.2f} held {days_held}d — reevaluate thesis")
 ```
 
 Flag prominently in analysis cards for positions meeting ALL criteria:
@@ -737,9 +740,8 @@ if final_amount >= 50:
         result = create_limit_order(
             symbol="SYMBOL",
             amount=final_amount,
+            limit_price=LIMIT_PRICE,
             direction="BUY",
-            rate=LIMIT_PRICE,
-            atr_value=ATR_VALUE,
             limits_override=AggressiveRiskLimits(),
             reason=f"analyze-portfolio: limit order at ${LIMIT_PRICE} (entry zone)"
         )
@@ -755,7 +757,7 @@ if final_amount >= 50:
             limits_override=AggressiveRiskLimits(),
             reason="analyze-portfolio: [brief reason]"
         )
-        print(f"BUY {SYMBOL} ${sizing['amount']}: {result.message}")
+        print(f"BUY {SYMBOL} ${final_amount}: {result.message}")
 
     # 3. Post-trade verification (market orders only — limit orders fill later)
     if result.success and not USE_LIMIT_ORDER:

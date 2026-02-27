@@ -1,10 +1,10 @@
 """Centralized sector mapping, betas, and ETF definitions.
 
 Single source of truth for symbol→sector mapping used by:
-- risk-assessment agent (scenario analysis)
+- risk-assessment agent (scenario analysis, tax-loss harvesting)
 - sector-rotation agent (portfolio sector exposure)
-- analyze-portfolio command (sector concentration checks)
-- morning-check command (sector concentration checks)
+Commands still use inline copies of SEMICONDUCTOR_SYMBOLS and SECTOR_ETFS
+for now — to be migrated in a future PR.
 """
 
 # 11 SPDR sector ETFs
@@ -51,7 +51,7 @@ SYMBOL_SECTOR_MAP = {
     'ZS': 'XLK', 'TEAM': 'XLK', 'MRVL': 'XLK', 'MU': 'XLK',
     'ANET': 'XLK', 'ASML': 'XLK', 'TSM': 'XLK', 'KLAC': 'XLK',
     'LRCX': 'XLK', 'QCOM': 'XLK', 'TXN': 'XLK', 'ON': 'XLK',
-    'SMCI': 'XLK', 'ARM': 'XLK', 'DELL': 'XLK', 'WDAY': 'XLK',
+    'SMCI': 'XLK', 'ARM': 'XLK', 'DELL': 'XLK', 'WDAY': 'XLK', 'AMAT': 'XLK',
     'SNOW': 'XLK', 'XYZ': 'XLK',
     # Communication (XLC)
     'GOOGL': 'XLC', 'META': 'XLC', 'NFLX': 'XLC', 'DIS': 'XLC',
@@ -98,8 +98,10 @@ def get_sector(symbol: str) -> str:
 
 
 def get_beta(symbol: str) -> float:
-    """Return estimated beta for a symbol vs SPY."""
+    """Return estimated beta for a symbol vs SPY. Unknown symbols default to 1.0 (market beta)."""
     if symbol in CRYPTO_SYMBOLS:
         return 2.5
-    sector = SYMBOL_SECTOR_MAP.get(symbol, 'XLK')
+    sector = SYMBOL_SECTOR_MAP.get(symbol)
+    if sector is None:
+        return 1.0
     return SECTOR_BETAS.get(sector, 1.0)

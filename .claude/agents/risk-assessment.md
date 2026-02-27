@@ -148,14 +148,15 @@ for p in positions:
             try:
                 opened = datetime.fromisoformat(ts.replace('Z',''))
                 days = (now - opened).days
-                if pnl < 0 and days > 14:
+                pnl_pct = (pnl / amount * 100) if amount > 0 else 0
+                if pnl_pct < -10 and days > 30:
                     tax_saving = abs(pnl) * 0.15  # Czech 15% tax
                     net_cost = abs(pnl) - tax_saving
-                    print(f"🔴 TAX-LOSS HARVEST: {sym} — loss ${pnl:.2f} (held {days}d) → saves ${tax_saving:.2f} tax → net cost ${net_cost:.2f}")
-                elif pnl < 0 and days > 30:
-                    print(f"⚠️ UNDERPERFORMER: {sym} — loss ${pnl:.2f} held {days}d — reevaluate thesis")
-            except Exception:
-                pass
+                    print(f"🔴 TAX-LOSS HARVEST: {sym} — loss ${pnl:.2f} ({pnl_pct:.0f}%, held {days}d) → saves ${tax_saving:.2f} tax → net cost ${net_cost:.2f}")
+                elif pnl < 0 and days > 60:
+                    print(f"⚠️ CHRONIC UNDERPERFORMER: {sym} — loss ${pnl:.2f} held {days}d — reevaluate thesis")
+            except Exception as e:
+                print(f"  [tax-loss] Skipping {sym}: {e}")
             break
 ```
 

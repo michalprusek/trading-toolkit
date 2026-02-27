@@ -775,9 +775,8 @@ if final_amount >= 50:
         result = create_limit_order(
             symbol="SYMBOL",
             amount=final_amount,
+            limit_price=LIMIT_PRICE,
             direction="BUY",
-            rate=LIMIT_PRICE,
-            atr_value=ATR_VALUE,
             limits_override=AggressiveRiskLimits(),
             reason=f"morning-check: limit order at ${LIMIT_PRICE} (entry zone)"
         )

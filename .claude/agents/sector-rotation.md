@@ -43,7 +43,7 @@ sector_exposure = {}
 total_portfolio = sum(p['amount'] for p in portfolio_positions)
 for pos in portfolio_positions:
     sym = pos['symbol']
-    sector = SYMBOL_SECTOR_MAP.get(sym, 'CRYPTO' if sym in CRYPTO_SYMBOLS else 'OTHER')
+    sector = get_sector(sym)
     if sector not in sector_exposure:
         sector_exposure[sector] = {'symbols': [], 'total_amount': 0.0, 'pct': 0.0}
     sector_exposure[sector]['symbols'].append(sym)
