@@ -133,3 +133,39 @@ class TestLimitsOverride:
         result = check_trade("AAPL", 30, "BUY", limits_override=aggressive)
         assert not result.passed
         assert any("below minimum" in v for v in result.violations)
+
+
+class TestExposureUsesMarketValue:
+    @patch("src.trading.risk.get_portfolio")
+    def test_positive_pnl_increases_exposure(self, mock_portfolio):
+        """With positive PnL, market value > invested, so exposure is higher."""
+        # invested=5000, pnl=2000, cash=5000 → total_value=12000
+        # market_value = 12000 - 5000 = 7000 (not 5000!)
+        # exposure = 7000/12000 = 58.3%, not 41.7%
+        mock_portfolio.return_value = _mock_portfolio(
+            total_invested=5000, cash=5000, total_pnl=2000
+        )
+        # Adding $4000 → new exposure = (7000+4000)/12000 = 91.7% > 90% default
+        result = check_trade("AAPL", 4000, "BUY")
+        assert not result.passed
+        assert any("exposure" in v.lower() for v in result.violations)
+
+    @patch("src.trading.risk.get_portfolio")
+    def test_zero_pnl_equivalent_to_invested(self, mock_portfolio):
+        """With PnL=0, market value equals invested — old and new formula agree."""
+        mock_portfolio.return_value = _mock_portfolio(
+            total_invested=5000, cash=5000, total_pnl=0
+        )
+        # market_value = 10000 - 5000 = 5000 = total_invested
+        result = check_trade("AAPL", 500, "BUY")
+        assert result.passed
+
+    @patch("src.trading.risk.get_portfolio")
+    def test_daily_loss_check_failure_warns(self, mock_portfolio):
+        """When daily loss DB check fails, trade proceeds with warning."""
+        mock_portfolio.return_value = _mock_portfolio()
+        with patch("src.trading.risk.TradeLogRepo") as mock_repo:
+            mock_repo.return_value.get_today_stats.side_effect = Exception("DB error")
+            result = check_trade("AAPL", 100, "BUY")
+        assert result.passed
+        assert any("circuit breaker" in w.lower() for w in result.warnings)

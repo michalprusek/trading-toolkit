@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from config import settings, RiskLimits
 from src.portfolio.manager import get_portfolio
 from src.storage.repositories import TradeLogRepo
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,7 +92,8 @@ def check_trade(
                     f"Daily loss {daily_loss_pct:.1%} exceeds limit {limits.max_daily_loss_pct:.0%}"
                 )
     except Exception:
-        pass
+        _log.error("Daily loss check failed — trade allowed with caution", exc_info=True)
+        warnings.append("Daily loss check failed (DB error) — could not verify circuit breaker")
 
     # 8. CFD / leverage warnings
     if leverage > 1:

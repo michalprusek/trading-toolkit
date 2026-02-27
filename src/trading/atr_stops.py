@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from src.market.indicators import chandelier_exit, supertrend
+
+_log = logging.getLogger(__name__)
 
 
 def calculate_atr_stops(
@@ -180,13 +184,24 @@ def calculate_position_size(
 
     conviction = conviction.lower()
     if conviction not in _CONVICTION:
+        _log.warning(
+            "Unknown conviction level %r — falling back to 'moderate'. Valid: %s",
+            conviction, list(_CONVICTION.keys()),
+        )
         conviction = "moderate"
 
     risk_pct, max_concentration = _CONVICTION[conviction]
     risk_budget = portfolio_value * risk_pct
 
     # Determine SL distance: prefer explicit sl_distance_pct, fall back to 2×ATR.
-    if sl_distance_pct is not None and sl_distance_pct > 0:
+    if sl_distance_pct is not None:
+        if sl_distance_pct <= 0:
+            return {"error": f"Invalid sl_distance_pct={sl_distance_pct} (must be > 0)"}
+        if sl_distance_pct > 1.0:
+            _log.warning(
+                "sl_distance_pct=%s looks like a percentage, not a fraction (expected e.g. 0.05 for 5%%)",
+                sl_distance_pct,
+            )
         sl_frac = sl_distance_pct
     else:
         sl_frac = (atr * 2) / price

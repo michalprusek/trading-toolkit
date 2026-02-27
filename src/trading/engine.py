@@ -145,6 +145,7 @@ def close_position(
 ) -> TradeResult:
     trade_log = TradeLogRepo()
     symbol = ""
+    pnl: float | None = None
 
     # If instrument_id not provided, look it up from portfolio
     if instrument_id is None:
@@ -154,15 +155,20 @@ def close_position(
             if p.position_id == position_id:
                 instrument_id = p.instrument_id
                 symbol = getattr(p, "symbol", "")
+                pnl = getattr(p, "net_profit", None)
                 break
     else:
-        # Even when instrument_id is provided, try to get the symbol
-        from src.portfolio.manager import get_portfolio
-        portfolio = get_portfolio()
-        for p in portfolio.positions:
-            if p.position_id == position_id:
-                symbol = getattr(p, "symbol", "")
-                break
+        # Best-effort symbol + pnl lookup for logging (non-essential for close to succeed)
+        try:
+            from src.portfolio.manager import get_portfolio
+            portfolio = get_portfolio()
+            for p in portfolio.positions:
+                if p.position_id == position_id:
+                    symbol = getattr(p, "symbol", "")
+                    pnl = getattr(p, "net_profit", None)
+                    break
+        except Exception:
+            _log.debug("Could not fetch portfolio for symbol lookup on close")
 
     if instrument_id is None:
         return TradeResult(
@@ -175,7 +181,7 @@ def close_position(
         client = _get_client()
         path = endpoints.close_trade_path(position_id)
         resp = client.post(path, {"InstrumentId": instrument_id})
-        trade_log.log_close(position_id, symbol=symbol, pnl=None, reason=reason)
+        trade_log.log_close(position_id, symbol=symbol, pnl=pnl, reason=reason)
         return TradeResult(
             success=True,
             position_id=position_id,
@@ -184,7 +190,7 @@ def close_position(
         )
     except Exception as e:
         _log.exception("close_position failed for position %s", position_id)
-        trade_log.log_close(position_id, symbol=symbol, pnl=None, reason=f"FAILED: {e}")
+        trade_log.log_close(position_id, symbol=symbol, pnl=pnl, reason=f"FAILED: {e}")
         return TradeResult(success=False, message=str(e))
 
 
@@ -207,6 +213,7 @@ def create_limit_order(
     info = resolve_symbol(symbol)
     if not info:
         result = TradeResult(success=False, message=f"Instrument '{symbol}' not found")
+        trade_log.log_trade(None, symbol, direction, amount, "error", reason=reason)
         return result
 
     iid = info["instrument_id"]

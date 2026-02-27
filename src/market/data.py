@@ -218,7 +218,7 @@ def analyze_instrument(symbol: str, extended: bool = False) -> dict:
     # Relative volume
     rvol_val = ind.rvol(df) if "volume" in df.columns else float("nan")
 
-    # MA alignment (use sma_50 for alignment; sma_200 may be NaN with 60 bars)
+    # MA alignment (sma_200 requires 200+ bars of history)
     alignment = ind.ma_alignment(current_price, ema_21, sma_50, sma_200_val)
 
     # Pre-market gap: current live price vs last candle close

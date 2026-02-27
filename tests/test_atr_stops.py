@@ -233,6 +233,51 @@ class TestCalculatePositionSize:
         assert result_wide["binding_constraint"] == "risk"
         assert result_wide["amount"] < result_tight["amount"]
 
+    def test_sl_distance_pct_zero_returns_error(self):
+        """sl_distance_pct=0 must return error, not silently fall through to ATR."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            sl_distance_pct=0.0,
+        )
+        assert "error" in result
+
+    def test_sl_distance_pct_negative_returns_error(self):
+        """Negative sl_distance_pct must return error."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            sl_distance_pct=-0.05,
+        )
+        assert "error" in result
+
+    def test_atr_zero_with_sl_distance_pct_succeeds(self):
+        """atr=0 is OK when sl_distance_pct is explicitly provided."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=0, price=100, conviction="moderate",
+            sl_distance_pct=0.05,
+        )
+        assert "error" not in result
+        assert result["amount"] > 0
+
+    def test_atr_zero_without_sl_distance_returns_error(self):
+        """atr=0 without sl_distance_pct must return error."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=0, price=100, conviction="moderate",
+        )
+        assert "error" in result
+
+    def test_cash_buffer_binding_constraint(self):
+        """When cash is the binding constraint, result should report it."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=250,
+            atr=5, price=100, conviction="strong",
+        )
+        assert result.get("amount") == pytest.approx(50.0)
+        assert result.get("binding_constraint") == "cash"
+
 
 class TestCalculateChandelierStops:
     def test_buy_returns_expected_keys(self, trending_ohlcv):
