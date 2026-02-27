@@ -2,7 +2,7 @@
 name: watchlist-screener
 description: Use this agent to screen watchlist symbols using CSS (Composite Screening Score) to identify BUY opportunities. Calculates technical scores and assigns OPPORTUNITY/NEUTRAL/AVOID signal. Triggered by morning checks or when user asks about watchlist setups and new position opportunities.
 
-model: sonnet
+model: opus
 color: green
 tools: ["Bash", "Read", "Grep"]
 ---

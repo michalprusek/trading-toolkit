@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from config import settings, RiskLimits
 from src.portfolio.manager import get_portfolio
 from src.storage.repositories import TradeLogRepo
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,11 +59,12 @@ def check_trade(
             f"Already at max positions ({len(portfolio.positions)}/{limits.max_open_positions})"
         )
 
-    # 5. Total exposure check
+    # 5. Total exposure check (uses current market value, not original invested)
     total_value = portfolio.total_value
     if total_value > 0:
-        current_exposure = portfolio.total_invested / total_value
-        new_exposure = (portfolio.total_invested + amount) / total_value
+        current_market_value = total_value - portfolio.cash_available
+        current_exposure = current_market_value / total_value
+        new_exposure = (current_market_value + amount) / total_value
         if new_exposure > limits.max_total_exposure_pct:
             violations.append(
                 f"Total exposure would be {new_exposure:.1%} (max {limits.max_total_exposure_pct:.0%})"
@@ -88,9 +92,10 @@ def check_trade(
                     f"Daily loss {daily_loss_pct:.1%} exceeds limit {limits.max_daily_loss_pct:.0%}"
                 )
     except Exception:
-        pass
+        _log.error("Daily loss check failed — trade allowed with caution", exc_info=True)
+        warnings.append("Daily loss check failed (DB error) — could not verify circuit breaker")
 
-    # 9. CFD / leverage warnings
+    # 8. CFD / leverage warnings
     if leverage > 1:
         warnings.append("Leveraged position: overnight fees will apply")
     if direction == "SELL":

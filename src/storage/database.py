@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     total_pnl REAL NOT NULL,
     cash_available REAL NOT NULL,
     positions_json TEXT NOT NULL,
-    num_positions INTEGER NOT NULL
+    num_positions INTEGER NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'real'
 );
 
 CREATE TABLE IF NOT EXISTS trade_log (
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS trade_log (
     amount REAL NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('executed','rejected','error')),
     result_json TEXT,
-    reason TEXT
+    reason TEXT,
+    mode TEXT NOT NULL DEFAULT 'real'
 );
 
 CREATE TABLE IF NOT EXISTS position_closes (
@@ -35,7 +37,8 @@ CREATE TABLE IF NOT EXISTS position_closes (
     position_id INTEGER NOT NULL,
     symbol TEXT NOT NULL,
     pnl REAL,
-    reason TEXT
+    reason TEXT,
+    mode TEXT NOT NULL DEFAULT 'real'
 );
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -73,10 +76,26 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+_MIGRATIONS = [
+    # Add mode column to tables that predate mode tracking
+    ("portfolio_snapshots", "mode", "ALTER TABLE portfolio_snapshots ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'"),
+    ("trade_log", "mode", "ALTER TABLE trade_log ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'"),
+    ("position_closes", "mode", "ALTER TABLE position_closes ADD COLUMN mode TEXT NOT NULL DEFAULT 'real'"),
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, sql in _MIGRATIONS:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in cols:
+            conn.execute(sql)
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
+        _run_migrations(conn)
         conn.commit()
     finally:
         conn.close()

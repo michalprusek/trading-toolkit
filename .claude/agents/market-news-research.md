@@ -2,7 +2,7 @@
 name: market-news-research
 description: Use this agent for deep news research during full portfolio analysis. Uses structured APIs plus extensive WebSearch for market overview, per-symbol news, sector trends, and catalyst calendar. Triggered during /analyze-portfolio Phase 2 deep research.
 
-model: sonnet
+model: opus
 color: yellow
 tools: ["Bash", "Read", "Grep", "WebSearch", "WebFetch"]
 ---

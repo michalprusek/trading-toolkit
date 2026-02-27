@@ -91,7 +91,7 @@ if tlt: macro_context['tlt_direction'] = 'RISING' if len(tlt)>1 and tlt[-1]>tlt[
 print(json.dumps(macro_context, indent=2))
 ```
 
-**Sector rotation ranking (11 ETFs vs SPY, 5D and 20D):**
+**Sector rotation ranking (11 ETFs vs SPX500, 5D and 20D):**
 
 ```python
 import os, json, time
@@ -104,10 +104,10 @@ SECTOR_ETFS = {
     'XLP':'ConsStaples','XLB':'Materials','XLU':'Utilities','XLRE':'RealEstate'
 }
 
-spy_iid = resolve_symbol('SPY'); spy_iid = spy_iid['instrument_id'] if isinstance(spy_iid, dict) else spy_iid
-spy_c = get_candles(spy_iid, 'OneDay', 25)
-spy_20d = round((spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100,2) if spy_c is not None and len(spy_c)>=21 else 0.0
-spy_5d  = round((spy_c['close'].iloc[-1]/spy_c['close'].iloc[-6]-1)*100,2)  if spy_c is not None and len(spy_c)>=6  else 0.0
+spx_iid = resolve_symbol('SPX500'); spx_iid = spx_iid['instrument_id'] if isinstance(spx_iid, dict) else spx_iid
+spx_c = get_candles(spx_iid, 'OneDay', 25)
+spx_20d = round((spx_c['close'].iloc[-1]/spx_c['close'].iloc[-21]-1)*100,2) if spx_c is not None and len(spx_c)>=21 else 0.0
+spx_5d  = round((spx_c['close'].iloc[-1]/spx_c['close'].iloc[-6]-1)*100,2)  if spx_c is not None and len(spx_c)>=6  else 0.0
 
 sector_rotation_rankings = {}
 for etf, name in SECTOR_ETFS.items():
@@ -120,24 +120,24 @@ for etf, name in SECTOR_ETFS.items():
         ret20 = round((c['close'].iloc[-1]/c['close'].iloc[-21]-1)*100,2) if c is not None and len(c)>=21 else None
         sector_rotation_rankings[etf] = {
             'name': name, 'ret_5d': ret5, 'ret_20d': ret20,
-            'vs_spy_5d': round(ret5 - spy_5d, 2) if ret5 is not None else None,
-            'vs_spy_20d': round(ret20 - spy_20d, 2) if ret20 is not None else None,
+            'vs_spx_5d': round(ret5 - spx_5d, 2) if ret5 is not None else None,
+            'vs_spx_20d': round(ret20 - spx_20d, 2) if ret20 is not None else None,
             'trend': r.get('trend'), 'ma_align': r.get('ma_alignment',{}).get('status'),
         }
     except Exception as e:
         sector_rotation_rankings[etf] = {'name': name, 'error': str(e)}
 
-ranked = sorted(sector_rotation_rankings.items(), key=lambda x: x[1].get('vs_spy_5d') or -99, reverse=True)
+ranked = sorted(sector_rotation_rankings.items(), key=lambda x: x[1].get('vs_spx_5d') or -99, reverse=True)
 print(json.dumps(ranked, indent=2, default=str))
 ```
 
-Save `sector_rotation_rankings`, `macro_context`, `spy_20d`, and `spy_5d` — pass all to Phase 2 agents and to the sector-rotation agent. `spy_20d` is needed again in Phase 3 benchmark comparison.
+Save `sector_rotation_rankings`, `macro_context`, `spx_20d`, and `spx_5d` — pass all to Phase 2 agents and to the sector-rotation agent. `spx_20d` is needed again in Phase 3 benchmark comparison.
 
 Print sector rotation table:
 ```
 ## Sector Rotation Ranking
-| # | Sector | ETF | 5D Return | 20D Return | vs SPY 5D | vs SPY 20D | Trend | MA | Status |
-(IN ROTATION: vs_spy_5d > +1%; LAGGING: vs_spy_5d < −1%; NEUTRAL: ±1%)
+| # | Sector | ETF | 5D Return | 20D Return | vs SPX500 5D | vs SPX500 20D | Trend | MA | Status |
+(IN ROTATION: vs_spx_5d > +1%; LAGGING: vs_spx_5d < −1%; NEUTRAL: ±1%)
 TOP IN ROTATION: [top 3]   LAGGING: [bottom 3]
 ```
 
@@ -416,11 +416,11 @@ Combine insights from all 5 agents + history:
 - Fee drag assessment (total overnight/CFD fees across portfolio)
 - Circuit breaker headroom
 
-**Benchmark Comparison vs SPY:**
+**Benchmark Comparison vs SPX500:**
 ```python
 import sqlite3
-# spy_20d was computed and saved in Step 1.0b — use that value here
-# spy_20d = 20-day SPY return (already computed: (spy_c['close'].iloc[-1]/spy_c['close'].iloc[-21]-1)*100)
+# spx_20d was computed and saved in Step 1.0b — use that value here
+# spx_20d = 20-day SPX500 return (already computed: (spx_c['close'].iloc[-1]/spx_c['close'].iloc[-21]-1)*100)
 conn = sqlite3.connect('data/etoro.db')
 snaps = conn.execute(
     "SELECT total_value, timestamp FROM portfolio_snapshots ORDER BY timestamp ASC"
@@ -428,10 +428,10 @@ snaps = conn.execute(
 conn.close()
 if len(snaps) >= 2:
     pf_return = round((snaps[-1][0] / snaps[0][0] - 1) * 100, 1)
-    # spy_20d: use the value saved from Step 1.0b output (not re-fetched here)
-    print(f"Portfolio return since first snapshot: {pf_return:+.1f}%  |  SPY 20d: {spy_20d:+.1f}%  |  Alpha: {pf_return-spy_20d:+.1f}%")
+    # spx_20d: use the value saved from Step 1.0b output (not re-fetched here)
+    print(f"Portfolio return since first snapshot: {pf_return:+.1f}%  |  SPX500 20d: {spx_20d:+.1f}%  |  Alpha: {pf_return-spx_20d:+.1f}%")
 ```
-Report: "Portfolio return: +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%" (use `spy_20d` from Step 1.0b saved output)
+Report: "Portfolio return: +X.X% | SPX500 20d: +Y.Y% | Alpha: ±Z.Z%" (use `spx_20d` from Step 1.0b saved output)
 
 **Position Aging (from trade_log):**
 ```python
@@ -473,7 +473,7 @@ When setting BUY conviction level, apply sector_score from sector-rotation agent
 
 For EACH position in portfolio AND each new candidate with a BUY recommendation, create an analysis card:
 
-- **Technical** (from Technical Agent): trend, weekly alignment, key signals, S/R levels, pattern, relative strength vs SPY, ATR value
+- **Technical** (from Technical Agent): trend, weekly alignment, key signals, S/R levels, pattern, relative strength vs SPX500, ATR value
 - **Fundamental** (from Fundamental Agent): valuation, sector P/E comparison, analysts, earnings risk level, estimated fair value
 - **News** (from News Agent): recent developments, sentiment score (-5 to +5), upcoming catalysts
 - **Cost** (from Fundamental Agent): spread + overnight fee impact + fee drag assessment
@@ -607,13 +607,19 @@ sizing = calculate_position_size(
     price=CURRENT_PRICE,              # from Technical Agent
     conviction="strong|moderate|weak", # from Phase 3 consensus
     current_exposure_pct=portfolio.total_invested / portfolio.total_value if portfolio.total_value > 0 else 0,
+    sl_distance_pct=SL_DISTANCE_PCT,  # from Chandelier stop: (price - sl_rate) / price
 )
 
-if sizing.get("amount", 0) >= 50:
+# Apply VIX sizing adjustment (computed in Phase 1 market regime check)
+vix_adj = VIX_SIZING_ADJUSTMENT  # e.g. 1.0, 0.75, 0.5, or 0.25
+final_amount = round(sizing.get("amount", 0) * vix_adj, 2)
+print(f"  Sizing: ${sizing.get('amount',0):.0f} × VIX adj {vix_adj} = ${final_amount:.0f}")
+
+if final_amount >= 50:
     # 2. Execute trade with ATR stops + trailing SL
     result = open_position(
         symbol="SYMBOL",
-        amount=sizing["amount"],
+        amount=final_amount,
         direction="BUY",
         atr_value=ATR_VALUE,
         trailing_sl=True,
@@ -647,7 +653,7 @@ if sizing.get("amount", 0) >= 50:
         else:
             print(f"  WARNING: {SYMBOL} NOT found in portfolio after trade!")
 else:
-    print(f"SKIP {SYMBOL}: calculated amount ${sizing.get('amount', 0):.0f} below $50 minimum")
+    print(f"SKIP {SYMBOL}: VIX-adjusted amount ${final_amount:.0f} below $50 minimum (raw: ${sizing.get('amount', 0):.0f})")
 ```
 
 ### Rebalancing Note
@@ -761,7 +767,7 @@ for c in closes[:5]:
 - Total: $X, Cash: $Y, Positions: N, Overall P&L: $Z (X%)
 - Exposure: X%
 ### Performance Attribution
-- Portfolio return (all snapshots): +X.X% | SPY 20d: +Y.Y% | Alpha: ±Z.Z%
+- Portfolio return (all snapshots): +X.X% | SPX500 20d: +Y.Y% | Alpha: ±Z.Z%
 - Best closed trade: SYMBOL +$X (reason: SL/TP/manual)
 - Worst closed trade: SYMBOL −$X
 - Sector exposure at time of analysis: [Tech X%, Financials Y%, Healthcare Z%, ...]
@@ -775,7 +781,7 @@ Increment the analysis number based on how many entries already exist. Use today
 ## Rules
 
 ### Position Sizing & Risk
-- Use **AggressiveRiskLimits** for all trades: $50-$3000 per trade, max 20% concentration, max 95% exposure, 1x leverage only
+- Use **AggressiveRiskLimits** for all trades: $50-$5000 per trade, max 20% concentration, max 95% exposure, 1x leverage only
 - **Always use conviction-based position sizing** via `calculate_position_size()` — never hardcode amounts
 - **Apply VIX sizing adjustment**: multiply all BUY amounts by `regime["vix"]["sizing_adjustment"]` (1.0 for VIX<20, 0.75 for 20-25, 0.5 for 25-30, 0.25 for >30)
 - Respect daily loss circuit breaker (5%) — halt ALL execution if triggered

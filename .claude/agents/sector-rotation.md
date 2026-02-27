@@ -2,11 +2,11 @@
 name: sector-rotation
 description: >
   Use this agent for sector rotation analysis during full portfolio analysis.
-  Ranks 11 sector ETFs by relative strength vs SPY, maps portfolio positions
+  Ranks 11 sector ETFs by relative strength vs SPX500, maps portfolio positions
   to sectors, identifies which sectors have institutional money flowing in vs out,
   and provides sector-based conviction scores for BUY candidates.
   Triggered during /analyze-portfolio Phase 2.
-model: sonnet
+model: opus
 color: blue
 tools: ["Bash", "Read", "Grep"]
 ---
@@ -110,10 +110,10 @@ CRYPTO: use market regime bias — `sector_score = +1` if RISK_ON, `−1` if RIS
 ```
 ## Sector Rotation Analysis
 
-### Sector Rankings (5D Relative Strength vs SPY)
-| # | Sector | ETF | 5D Return | 20D Return | vs SPY 5D | vs SPY 20D | Trend | MA Align | Status |
-|---|--------|-----|-----------|------------|-----------|------------|-------|----------|--------|
-(sorted best→worst by vs_spy_5d; mark status: IN ROTATION / NEUTRAL / LAGGING)
+### Sector Rankings (5D Relative Strength vs SPX500)
+| # | Sector | ETF | 5D Return | 20D Return | vs SPX500 5D | vs SPX500 20D | Trend | MA Align | Status |
+|---|--------|-----|-----------|------------|--------------|---------------|-------|----------|--------|
+(sorted best→worst by vs_spx_5d; mark status: IN ROTATION / NEUTRAL / LAGGING)
 
 ### Portfolio Sector Exposure
 | Sector | ETF | Holdings | Invested | % Portfolio | RS Status | Alert |
@@ -129,14 +129,14 @@ CRYPTO: use market regime bias — `sector_score = +1` if RISK_ON, `−1` if RIS
 
 ### Rotation Recommendations
 **SECTORS TO ADD EXPOSURE** (in rotation, portfolio underweight):
-- Sector: IN ROTATION (+X% vs SPY), portfolio at X% — top candidate: SYMBOL
+- Sector: IN ROTATION (+X% vs SPX500), portfolio at X% — top candidate: SYMBOL
 
 **SECTORS TO REDUCE** (lagging, portfolio overweight):
-- Sector: LAGGING (−X% vs SPY), portfolio at X% — consider reducing: SYMBOL
+- Sector: LAGGING (−X% vs SPX500), portfolio at X% — consider reducing: SYMBOL
 
 ### BUY Candidate Sector Scores
-| Symbol | Sector | Status | vs SPY 5D | Sector Score | Note |
-|--------|--------|--------|-----------|--------------|------|
+| Symbol | Sector | Status | vs SPX500 5D | Sector Score | Note |
+|--------|--------|--------|--------------|--------------|------|
 (Score: +2 strong tailwind, +1 tailwind, 0 neutral, −2 headwind)
 ```
 

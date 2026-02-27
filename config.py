@@ -16,10 +16,16 @@ class RiskLimits(BaseModel):
 
 
 class AggressiveRiskLimits(RiskLimits):
-    """Medium/high risk, no leverage."""
+    """Medium/high risk, no leverage.
+
+    max_single_trade_usd is a safety guard above the sizing logic.
+    calculate_position_size() caps at 8% concentration (strong), so this
+    limit only fires on portfolios >$62K.  Keep it well above realistic
+    sizing output to avoid silent rejections.
+    """
     max_position_pct: float = 0.20
     max_total_exposure_pct: float = 0.95
-    max_single_trade_usd: float = 3000.0
+    max_single_trade_usd: float = 5000.0
     min_trade_usd: float = 50.0
     max_daily_loss_pct: float = 0.05
     default_stop_loss_pct: float = 8.0

@@ -164,9 +164,11 @@ class TestAnalyzeMarketRegime:
             regime = analyze_market_regime()
 
         # spy_bull=T, qqq_bull=F, above_sma20=F (490<510), above_sma50=F (490<530), vix_ok=F → 1 → RISK_OFF
-        # Old default (vix_ok=True): bull_score=2 → CAUTIOUS (wrong)
         assert regime["bias"] == "RISK_OFF"
-        assert "vix" not in regime
+        # VIX key is always present with safe defaults when fetch fails
+        assert regime["vix"]["value"] is None
+        assert regime["vix"]["regime"] == "UNKNOWN"
+        assert regime["vix"]["sizing_adjustment"] == 1.0
 
     def test_elevated_vix_reduces_sizing(self):
         spy = _spy_result()
@@ -194,7 +196,7 @@ class TestAnalyzeMarketRegime:
         assert any("QQQ" in e for e in regime["errors"])
         assert "qqq" not in regime
 
-    def test_vix_none_does_not_add_vix_key(self):
+    def test_vix_none_provides_safe_defaults(self):
         spy = _spy_result()
         qqq = _qqq_result()
         with (
@@ -203,7 +205,10 @@ class TestAnalyzeMarketRegime:
         ):
             regime = analyze_market_regime()
 
-        assert "vix" not in regime
+        # VIX key always present with safe defaults — prevents KeyError in callers
+        assert regime["vix"]["value"] is None
+        assert regime["vix"]["regime"] == "UNKNOWN"
+        assert regime["vix"]["sizing_adjustment"] == 1.0
         assert any("VIX" in e for e in regime["errors"])
 
     def test_cautious_bias_mixed_signals(self):

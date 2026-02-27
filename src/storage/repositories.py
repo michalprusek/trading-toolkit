@@ -4,6 +4,7 @@ import json
 from datetime import date
 from typing import Any
 
+from config import settings
 from src.storage.database import get_connection
 
 
@@ -20,23 +21,29 @@ class PortfolioRepo:
         try:
             cur = conn.execute(
                 """INSERT INTO portfolio_snapshots
-                   (total_value, total_invested, total_pnl, cash_available, positions_json, num_positions)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (total_value, total_invested, total_pnl, cash_available, positions_json, num_positions, mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (total_value, total_invested, total_pnl, cash_available,
-                 json.dumps(positions), len(positions)),
+                 json.dumps(positions), len(positions), settings.trading_mode),
             )
             conn.commit()
             return cur.lastrowid
         finally:
             conn.close()
 
-    def get_snapshots(self, limit: int = 20) -> list[dict]:
+    def get_snapshots(self, limit: int = 20, mode: str | None = None) -> list[dict]:
         conn = get_connection()
         try:
-            rows = conn.execute(
-                "SELECT * FROM portfolio_snapshots ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            if mode:
+                rows = conn.execute(
+                    "SELECT * FROM portfolio_snapshots WHERE mode = ? ORDER BY timestamp DESC LIMIT ?",
+                    (mode, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM portfolio_snapshots ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()
@@ -57,10 +64,10 @@ class TradeLogRepo:
         try:
             cur = conn.execute(
                 """INSERT INTO trade_log
-                   (instrument_id, symbol, direction, amount, status, result_json, reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (instrument_id, symbol, direction, amount, status, result_json, reason, mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (instrument_id, symbol, direction, amount, status,
-                 json.dumps(result) if result else None, reason),
+                 json.dumps(result) if result else None, reason, settings.trading_mode),
             )
             conn.commit()
             return cur.lastrowid
@@ -73,8 +80,8 @@ class TradeLogRepo:
         conn = get_connection()
         try:
             cur = conn.execute(
-                "INSERT INTO position_closes (position_id, symbol, pnl, reason) VALUES (?, ?, ?, ?)",
-                (position_id, symbol, pnl, reason),
+                "INSERT INTO position_closes (position_id, symbol, pnl, reason, mode) VALUES (?, ?, ?, ?, ?)",
+                (position_id, symbol, pnl, reason, settings.trading_mode),
             )
             conn.commit()
             return cur.lastrowid
@@ -92,15 +99,23 @@ class TradeLogRepo:
             conn.close()
 
     def get_today_stats(self) -> dict:
+        """Compute today's realized P&L from position_closes (the only table
+        that reliably records close outcomes).  Falls back to 0 if no closes."""
         today = date.today().isoformat()
         conn = get_connection()
         try:
             row = conn.execute(
-                "SELECT * FROM daily_pnl WHERE date = ?", (today,)
+                """SELECT COALESCE(SUM(pnl), 0) AS realized_pnl,
+                          COUNT(*) AS trades_count
+                   FROM position_closes
+                   WHERE date(timestamp) = ? AND mode = ?""",
+                (today, settings.trading_mode),
             ).fetchone()
-            if row:
-                return dict(row)
-            return {"date": today, "realized_pnl": 0, "trades_count": 0}
+            return {
+                "date": today,
+                "realized_pnl": row["realized_pnl"] if row else 0,
+                "trades_count": row["trades_count"] if row else 0,
+            }
         finally:
             conn.close()
 

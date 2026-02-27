@@ -81,9 +81,9 @@ class TestCalculatePositionSize:
         )
         assert "amount" in result
         assert result["conviction"] == "strong"
-        assert result["risk_pct"] == 0.03
         assert result["amount"] > 0
-        assert result["amount"] <= 3000  # strong max
+        # strong: max 8% concentration = $800
+        assert result["amount"] <= 800
 
     def test_moderate_conviction(self):
         result = calculate_position_size(
@@ -91,8 +91,8 @@ class TestCalculatePositionSize:
             atr=5, price=100, conviction="moderate",
         )
         assert result["conviction"] == "moderate"
-        assert result["risk_pct"] == 0.02
-        assert result["amount"] <= 1500  # moderate max
+        # moderate: max 5% concentration = $500
+        assert result["amount"] <= 500
 
     def test_weak_conviction(self):
         result = calculate_position_size(
@@ -100,8 +100,8 @@ class TestCalculatePositionSize:
             atr=5, price=100, conviction="weak",
         )
         assert result["conviction"] == "weak"
-        assert result["risk_pct"] == 0.01
-        assert result["amount"] <= 500  # weak max
+        # weak: max 3% concentration = $300
+        assert result["amount"] <= 300
 
     def test_high_exposure_halving(self):
         normal = calculate_position_size(
@@ -146,15 +146,15 @@ class TestCalculatePositionSize:
         assert above_threshold["amount"] == pytest.approx(normal["amount"] / 2, rel=0.01)
 
     def test_cash_buffer_respected(self):
-        # $250 cash → usable = $50 (250 - 200 buffer); capped below ATR-based amount
+        # $250 cash → usable = $50 (250 - 200 buffer); capped below concentration amount
         result = calculate_position_size(
             portfolio_value=10000, cash_available=250,
             atr=5, price=100, conviction="strong",
         )
-        assert result.get("amount") == pytest.approx(50.0)  # min(3000, usable=50)
+        assert result.get("amount") == pytest.approx(50.0)
 
     def test_below_minimum_returns_zero(self):
-        # usable = $10 (210 - 200 buffer); ATR-based amount = $200 → capped to $10 < $50 minimum
+        # usable = $10 (210 - 200 buffer); → capped to $10 < $50 minimum
         result = calculate_position_size(
             portfolio_value=10000, cash_available=210,
             atr=50, price=100, conviction="weak",
@@ -176,12 +176,107 @@ class TestCalculatePositionSize:
         )
         assert result["conviction"] == "moderate"
 
-    def test_method_is_atr_sizing(self):
+    def test_method_is_sl_sizing(self):
         result = calculate_position_size(
             portfolio_value=10000, cash_available=5000,
             atr=5, price=100,
         )
-        assert result["method"] == "atr_sizing"
+        assert result["method"] == "sl_sizing"
+
+    def test_returns_actual_risk(self):
+        """New sizing reports actual $ at risk and binding constraint."""
+        result = calculate_position_size(
+            portfolio_value=18000, cash_available=11000,
+            atr=5, price=200, conviction="moderate",
+        )
+        assert "actual_risk" in result
+        assert "actual_risk_pct" in result
+        assert "binding_constraint" in result
+        assert result["actual_risk"] > 0
+        assert result["actual_risk_pct"] > 0
+
+    def test_sl_distance_pct_overrides_atr(self):
+        """When sl_distance_pct is provided, sizing uses it instead of ATR."""
+        # With 10% SL distance, risk_budget = 10000 * 0.015 = $150
+        # risk_based = $150 / 0.10 = $1500 → capped by concentration (5% = $500)
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            sl_distance_pct=0.10,
+        )
+        assert result["sl_distance_pct"] == 10.0
+        assert result["amount"] <= 500
+
+    def test_tight_sl_produces_smaller_position(self):
+        """Tight SL with low risk budget can produce amount below concentration cap."""
+        # Very large portfolio: risk_budget = 1M * 0.015 = $15K
+        # SL 1%: risk_based = $15K / 0.01 = $1.5M → capped at 5% = $50K
+        # SL 50%: risk_based = $15K / 0.50 = $30K → capped at 5% = $50K
+        # For normal portfolios, concentration always wins.
+        # But for small risk budgets with tight SLs, risk can win:
+        result_tight = calculate_position_size(
+            portfolio_value=5000, cash_available=4000,
+            atr=1, price=100, conviction="weak",
+            sl_distance_pct=0.20,  # 20% SL
+        )
+        # risk_budget = 5000 * 0.01 = $50, risk_based = $50/0.20 = $250
+        # concentration cap = 5000 * 0.03 = $150
+        # $250 > $150 → concentration wins, amount = $150
+        assert result_tight["binding_constraint"] == "concentration"
+
+        result_wide = calculate_position_size(
+            portfolio_value=5000, cash_available=4000,
+            atr=1, price=100, conviction="weak",
+            sl_distance_pct=0.50,  # 50% SL
+        )
+        # risk_based = $50/0.50 = $100 < $150 → risk wins
+        assert result_wide["binding_constraint"] == "risk"
+        assert result_wide["amount"] < result_tight["amount"]
+
+    def test_sl_distance_pct_zero_returns_error(self):
+        """sl_distance_pct=0 must return error, not silently fall through to ATR."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            sl_distance_pct=0.0,
+        )
+        assert "error" in result
+
+    def test_sl_distance_pct_negative_returns_error(self):
+        """Negative sl_distance_pct must return error."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=5, price=100, conviction="moderate",
+            sl_distance_pct=-0.05,
+        )
+        assert "error" in result
+
+    def test_atr_zero_with_sl_distance_pct_succeeds(self):
+        """atr=0 is OK when sl_distance_pct is explicitly provided."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=0, price=100, conviction="moderate",
+            sl_distance_pct=0.05,
+        )
+        assert "error" not in result
+        assert result["amount"] > 0
+
+    def test_atr_zero_without_sl_distance_returns_error(self):
+        """atr=0 without sl_distance_pct must return error."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=5000,
+            atr=0, price=100, conviction="moderate",
+        )
+        assert "error" in result
+
+    def test_cash_buffer_binding_constraint(self):
+        """When cash is the binding constraint, result should report it."""
+        result = calculate_position_size(
+            portfolio_value=10000, cash_available=250,
+            atr=5, price=100, conviction="strong",
+        )
+        assert result.get("amount") == pytest.approx(50.0)
+        assert result.get("binding_constraint") == "cash"
 
 
 class TestCalculateChandelierStops:

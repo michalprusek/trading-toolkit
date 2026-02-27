@@ -2,7 +2,7 @@
 name: technical-quick-check
 description: Use this agent for quick technical scans of portfolio holdings. Performs fast technical analysis and assigns HOLD/WATCH/ALERT status. Triggered by morning checks, daily monitoring, or when user asks about position health.
 
-model: sonnet
+model: opus
 color: cyan
 tools: ["Bash", "Read", "Grep"]
 ---
